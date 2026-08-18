@@ -261,6 +261,10 @@ const Net = {
     P.x = m.you.x; P.z = m.you.z; P.layer = m.you.layer;
     P.tx = m.you.x; P.tz = m.you.z; P.path = []; P.action = null;
     P.maxHits = m.you.maxHits;
+    // Prayer is singleplayer-only, so anything left burning from a solo session
+    // would quietly drain points here for no benefit. Start clean.
+    P.prayersOn = {};
+    Game.run = !!m.you.run; UI.syncRunButton();
     for (const o of m.overrides || []) this.applyScenery(o);
     Game.players = []; Game.npcs = []; Game.ground = [];
     Game.netMode = true;
@@ -292,6 +296,9 @@ const Net = {
     if (typeof m.curHits === 'number') P.curHits = m.curHits;
     if (typeof m.maxHits === 'number') P.maxHits = m.maxHits;
     if (typeof m.style === 'number') P.style = m.style;
+    // The authority owns the run flag; mirror it onto the client so the HUD button
+    // reflects what the sim is actually doing, not what we optimistically set.
+    if (typeof m.run === 'boolean') { Game.run = m.run; UI.syncRunButton(); }
     UI.renderInventory(); UI.renderStats(); UI.renderEquipment();
   },
 
@@ -380,5 +387,6 @@ const Net = {
   drop(i) { this.send({ t: 'drop', i }); },
   wield(i) { this.send({ t: 'wield', i }); },
   unequip(slot) { this.send({ t: 'unequip', slot }); },
-  style(s) { this.send({ t: 'style', style: s }); }
+  style(s) { this.send({ t: 'style', style: s }); },
+  run(on) { this.send({ t: 'run', on: !!on }); }
 };

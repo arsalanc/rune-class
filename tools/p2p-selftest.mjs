@@ -105,10 +105,11 @@ function makeRealm(tag) {
   // Stand-ins for the parts of the client net.js talks to.
   vm.runInContext(`
     var Sound = { ensure() {}, play() {} };
-    var Game = { player: {}, players: [], npcs: [], ground: [], netMode: false, eventHud: [] };
+    var Game = { player: {}, players: [], npcs: [], ground: [], netMode: false, eventHud: [], run: false };
     var UI = {
       addMessage(t, c) { __messages.push({ t, c }); },
-      refresh() {}, renderInventory() {}, renderStats() {}, renderEquipment() {}, renderEventBanner() {}
+      refresh() {}, renderInventory() {}, renderStats() {}, renderEquipment() {},
+      renderEventBanner() {}, syncRunButton() {}
     };
   `, ctx, { filename: 'stubs.js' });
 
@@ -164,6 +165,33 @@ check('the new position reaches the guest in a snapshot', guest.Game.player.tx !
   beforeTx + ' -> ' + guest.Game.player.tx);
 check('the guest is receiving snapshots', Array.isArray(guest.Game.npcs) && guest.Game.npcs.length > 0);
 
+// --- run is authoritative: the sim applies the speed, not the client ---
+const simPlayer = () => host.Host.sim.players.get(hostSidePlayer.pid);
+check('players start walking', simPlayer().run === false);
+
+guest.Net.run(true);
+await sleep(300);
+check('a run intent reaches the sim', simPlayer().run === true);
+check('the authority echoes the run flag back', guest.Game.run === true);
+
+// Cover the same ground walking vs running and compare distance travelled.
+const runDist = await (async () => {
+  const p = simPlayer(); p.x = 64.5; p.z = 64.5; p.path = [];
+  guest.Net.walk(80, 64);
+  await sleep(1000);
+  return Math.abs(simPlayer().x - 64.5);
+})();
+guest.Net.run(false);
+await sleep(300);
+const walkDist = await (async () => {
+  const p = simPlayer(); p.x = 64.5; p.z = 64.5; p.path = [];
+  guest.Net.walk(80, 64);
+  await sleep(1000);
+  return Math.abs(simPlayer().x - 64.5);
+})();
+check('running covers more ground than walking', runDist > walkDist * 1.4,
+  'run ' + runDist.toFixed(2) + ' vs walk ' + walkDist.toFixed(2));
+
 // --- the character save survives a disconnect ---
 guest.Net.transport.close();
 await sleep(300);
@@ -182,6 +210,7 @@ await sleep(120);
 check('their saved progress came back',
   Math.abs(returning.Game.player.x - saved.save.x) < 0.001,
   'expected ' + saved.save.x + ', got ' + returning.Game.player.x);
+check('the run setting persisted across the disconnect', saved.save.run === false && returning.Game.run === false);
 
 // --- the same character cannot be logged in twice ---
 const twin = makeRealm('twin');

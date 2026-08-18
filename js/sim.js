@@ -10,6 +10,7 @@
 
 const SLOW_EVERY = 4;         // 150ms loop; "slow" logic (gather/combat/AI) every 4th = 600ms
 const MOVE_SPEED = 2.1;       // tiles/sec, matches the singleplayer feel
+const RUN_SPEED = 3.9;        // same pair of constants singleplayer uses (game.js tick)
 
 let nextId = 1;
 
@@ -212,7 +213,7 @@ class Sim {
       x: World.SPAWN.x + 0.5, z: World.SPAWN.z + 0.5, layer: 0,
       xp: { hits: 1154 }, curHits: 10, style: 2,
       inv: [{ id: 'bronze_axe', qty: 1 }, { id: 'bronze_pickaxe', qty: 1 }, { id: 'tinderbox', qty: 1 }, { id: 'net', qty: 1 }],
-      worn: this.emptyWorn(), nextAtkTick: 0
+      worn: this.emptyWorn(), nextAtkTick: 0, run: false
     };
   }
 
@@ -223,6 +224,7 @@ class Sim {
     const p = this.newPlayer();
     p.xp = d.xp || p.xp; p.curHits = d.curHits || 10; p.inv = d.inv || p.inv;
     p.x = d.x || p.x; p.z = d.z || p.z; p.layer = d.layer || 0; p.style = d.style == null ? 2 : d.style;
+    p.run = !!d.run;
     // Object.assign fills in slots a save predates (cape/legs arrived with Southmarch)
     p.worn = Object.assign(this.emptyWorn(), d.worn || null);
     if (!d.worn) for (let i = 0; i < p.inv.length; i++) { const it = p.inv[i]; if (it && it.eq) { delete it.eq; const sl = ITEMS[it.id] && ITEMS[it.id].slot; if (sl) { p.worn[sl] = it; p.inv[i] = null; } } }
@@ -231,7 +233,7 @@ class Sim {
   }
 
   toSave(p) {
-    return { xp: p.xp, curHits: p.curHits, inv: p.inv, worn: p.worn, x: p.x, z: p.z, layer: p.layer, style: p.style };
+    return { xp: p.xp, curHits: p.curHits, inv: p.inv, worn: p.worn, x: p.x, z: p.z, layer: p.layer, style: p.style, run: !!p.run };
   }
 
   level(p, sk) { return levelForXp(p.xp[sk] || 0); }
@@ -253,7 +255,7 @@ class Sim {
     this.pushStats(p);
   }
 
-  pushStats(p) { this.emit({ kind: 'to', id: p.id, msg: { t: 'you', xp: p.xp, curHits: p.curHits, maxHits: this.maxHits(p), inv: p.inv, worn: p.worn, style: p.style } }); }
+  pushStats(p) { this.emit({ kind: 'to', id: p.id, msg: { t: 'you', xp: p.xp, curHits: p.curHits, maxHits: this.maxHits(p), inv: p.inv, worn: p.worn, style: p.style, run: !!p.run } }); }
   toPlayer(p, text, cls) { this.emit({ kind: 'to', id: p.id, msg: { t: 'msg', text, cls: cls || 'm-game' } }); }
 
   // ---------- inventory ----------
@@ -285,6 +287,11 @@ class Sim {
   }
 
   // ---------- intents from clients ----------
+  // Run is a plain speed toggle here, exactly as in singleplayer — there is no
+  // energy system to drain. Movement speed is applied in step(), so the client
+  // cannot make itself faster by lying about it.
+  intentRun(p, on) { p.run = !!on; this.pushStats(p); }
+
   intentWalk(p, x, z) {
     p.action = null;
     const path = World.findPath(p.layer, Math.floor(p.x), Math.floor(p.z), x, z);
@@ -342,7 +349,8 @@ class Sim {
       p.moving = false;
       if (p.path.length) {
         const n = p.path[0], tx = n.x + 0.5, tz = n.z + 0.5;
-        const ddx = tx - p.x, ddz = tz - p.z, dd = Math.hypot(ddx, ddz), stp = MOVE_SPEED * dt;
+        const ddx = tx - p.x, ddz = tz - p.z, dd = Math.hypot(ddx, ddz);
+        const stp = (p.run ? RUN_SPEED : MOVE_SPEED) * dt;
         if (dd <= stp) { p.x = tx; p.z = tz; p.path.shift(); }
         else { p.x += ddx / dd * stp; p.z += ddz / dd * stp; }
         p.moving = true;

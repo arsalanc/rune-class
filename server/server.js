@@ -44,7 +44,7 @@ wss.on('connection', (ws) => {
       byId.set(p.id, ws);
       send(ws, {
         t: 'welcome', id: p.id, name,
-        you: { xp: p.xp, curHits: p.curHits, maxHits: sim.maxHits(p), inv: p.inv, worn: p.worn, style: p.style, x: p.x, z: p.z, layer: p.layer },
+        you: { xp: p.xp, curHits: p.curHits, maxHits: sim.maxHits(p), inv: p.inv, worn: p.worn, style: p.style, x: p.x, z: p.z, layer: p.layer, run: !!p.run },
         overrides: sim.allOverrides(),
         online: [...sim.players.values()].map(q => ({ id: q.id, name: q.name }))
       });
@@ -65,6 +65,7 @@ wss.on('connection', (ws) => {
       case 'wield': sim.intentWield(p, m.i | 0); break;
       case 'unequip': sim.intentUnequip(p, String(m.slot || '')); break;
       case 'style': if (m.style >= 0 && m.style < 4) { p.style = m.style | 0; sim.pushStats(p); } break;
+      case 'run': sim.intentRun(p, !!m.on); break;
     }
   });
 

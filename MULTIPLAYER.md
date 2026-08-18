@@ -118,15 +118,25 @@ so a CDN outage or compromise cannot take down the crypto or quietly replace it.
 
 ## Scope
 
-Shared and authoritative: **movement, woodcutting, mining, fishing, combat (melee +
-ranged, per-weapon and per-NPC attack speeds, the combat triangle, worn equipment
-across all six slots, arrow recovery, melee adjacency), monster AI and aggro, loot,
-death, chat, and seeing other players.**
+Shared and authoritative: **movement (walk and run), woodcutting, mining, fishing,
+combat (melee + ranged, per-weapon and per-NPC attack speeds, the combat triangle,
+worn equipment across all six slots, arrow recovery, melee adjacency), monster AI and
+aggro, loot, death, chat, emotes, ladders, dynamic events, and seeing other players.**
 
-Still singleplayer-only, and they say so in multiplayer: banking, shops,
+Still singleplayer-only, and they say so when you try: banking, shops,
 smithing/smelting, cooking, firemaking, crafting, fletching, farming, prayer, magic,
 and quests/dialogue. The skilling and combat maths already live in shared modules, so
 bringing these online is mostly writing the intents and the handlers.
+
+Two rules of thumb from doing this:
+
+- **If the client already has the data, don't gate it.** Attack options show the
+  monster's combat level and weakness in multiplayer because `NPC_DEFS` and the
+  `Combat` module are already on every client — the server was never involved. Any
+  purely presentational difference between the two modes is a bug, not a limitation.
+- **Never let a control pretend.** Prayer used to toggle happily in multiplayer,
+  drain points client-side, and change nothing about the combat the sim was actually
+  resolving. A control that lies is worse than one that refuses.
 
 ## Tests
 

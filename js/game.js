@@ -337,6 +337,10 @@ const Game = {
   togglePrayer(id) {
     const P = this.player, pr = PRAYERS.find(p => p.id === id);
     if (!pr) return;
+    // The sim does not model prayer, so switching one on here would drain points
+    // client-side and change nothing about the combat the server is resolving. Say
+    // so instead of letting the tab pretend it worked.
+    if (this.netMode) { this.msg('Prayer is singleplayer-only for now — it would have no effect in a shared world.', 'm-red'); return; }
     if (P.prayersOn[id]) { delete P.prayersOn[id]; this._flicked[id] = true; }
     else {
       if (this.level('prayer') < pr.lvl) { this.msg('You need a Prayer level of ' + pr.lvl + ' to use ' + pr.name + '.', 'm-red'); return; }
@@ -3324,8 +3328,19 @@ const Game = {
       opts.push({ label: 'Examine ' + def.name, cb: () => this.msg(def.examine, 'm-game') });
     } else if (ref.kind === 'npc') {
       const n = ref.n, d = NPC_DEFS[n.type];
-      if (d.attackable) opts.push({ label: 'Attack ' + d.name, cb: () => this.netAction('attack', { n }) });
-      else opts.push({ label: 'Talk-to ' + d.name, cb: () => this.netTodo() });
+      if (d.attackable) {
+        // Identical to the singleplayer label. Every input is already local: the
+        // level comes from NPC_DEFS, the weakness from the shared Combat module, and
+        // the colour from your own combat level — the server is not involved, so
+        // there is no reason for multiplayer to show a plainer option than
+        // singleplayer does.
+        const lvl = this.npcCombatLevel(n), wk = this.npcWeakness(n.type);
+        opts.push({
+          label: 'Attack ' + d.name + ' (level-' + lvl + ')' + (wk ? ' — weak to ' + wk : ''),
+          lvlCol: this.combatColor(lvl),
+          cb: () => this.netAction('attack', { n })
+        });
+      } else opts.push({ label: 'Talk-to ' + d.name, cb: () => this.netTodo() });
       opts.push({ label: 'Examine ' + d.name, cb: () => this.msg(d.examine, 'm-game') });
     } else if (ref.kind === 'ground') {
       const g = ref.g, def = ITEMS[g.id];

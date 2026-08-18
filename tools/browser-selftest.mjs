@@ -8,6 +8,9 @@
 // the one that catches things the loopback harness structurally cannot — PeerJS
 // option names, data-channel binary types, secure-context requirements. It needs a
 // browser and an internet connection; without either it skips rather than fails.
+//
+// Point it at a deployed site instead of the local copy to verify a release:
+//   SITE_URL=https://<you>.github.io/<repo>/ npm run test:browser
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -41,8 +44,10 @@ if (!browser) {
 console.log('Browser end-to-end (' + path.basename(browser) + ')\n');
 
 // ---------- serve the game ----------
+// Skipped entirely when SITE_URL points at an already-deployed copy.
+const SITE_URL = process.env.SITE_URL;
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png' };
-const server = http.createServer((req, res) => {
+const server = SITE_URL ? null : http.createServer((req, res) => {
   const rel = decodeURIComponent((req.url || '/').split('?')[0]).replace(/^\/+/, '') || 'index.html';
   const file = path.join(root, rel);
   if (!file.startsWith(root)) { res.writeHead(403).end(); return; }
@@ -51,7 +56,8 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': (TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream') + '; charset=utf-8' });
     res.end(data);
   });
-}).listen(WEB_PORT);
+});
+if (server) server.listen(WEB_PORT);
 
 const profile = path.join(root, '.tooling', 'browser-test-profile');
 const proc = spawn(browser, [
@@ -59,7 +65,7 @@ const proc = spawn(browser, [
   '--user-data-dir=' + profile, '--remote-debugging-port=' + CDP_PORT, 'about:blank'
 ], { stdio: 'ignore' });
 
-const cleanup = () => { try { proc.kill(); } catch (e) {} try { server.close(); } catch (e) {} };
+const cleanup = () => { try { proc.kill(); } catch (e) {} try { if (server) server.close(); } catch (e) {} };
 process.on('exit', cleanup);
 
 // ---------- DevTools protocol ----------
@@ -103,7 +109,8 @@ let targets = null;
 for (let i = 0; i < 40 && !targets; i++) { try { targets = await devtools('/json/list'); } catch (e) { await sleep(500); } }
 if (!targets) { console.log('  could not reach the browser devtools endpoint'); cleanup(); process.exit(1); }
 
-const url = 'http://localhost:' + WEB_PORT + '/index.html';
+const url = SITE_URL || ('http://localhost:' + WEB_PORT + '/index.html');
+if (SITE_URL) console.log('  target: ' + SITE_URL + '\n');
 const host = await openTab(url);
 const guest = await openTab(url);
 
@@ -170,6 +177,35 @@ check('the guest is rendering the host\'s NPCs', await guest.evaluate('Game.npcs
 check('the guest\'s character was saved on the host', await host.evaluate(`(async () => !!(await Store.get('accounts','dave')))()`));
 check('the stored credential is not the plaintext password',
   await host.evaluate(`(async () => JSON.stringify(await Store.get('accounts','dave')).indexOf('correct-horse') === -1)()`));
+
+// ---------- parity with singleplayer ----------
+// Right-click options, the run toggle and the prayer tab are all places where
+// multiplayer used to silently differ from singleplayer.
+const label = await guest.evaluate(`(() => {
+  const n = (Game.npcs || []).find(x => NPC_DEFS[x.type] && NPC_DEFS[x.type].attackable);
+  if (!n) return 'NO-ATTACKABLE-NPC-IN-RANGE';
+  const o = Game.optionsFor({ kind: 'npc', n }).find(o => /^Attack/.test(o.label));
+  return o ? o.label + ' | col=' + (o.lvlCol || 'none') : 'NO-ATTACK-OPTION';
+})()`);
+check('attack options show the combat level, as in singleplayer', /\(level-\d+\)/.test(label), label);
+check('the level is colour-coded by threat', /col=hsl/.test(label), label);
+
+check('the run button is not blocked in multiplayer', await guest.evaluate(`(() => {
+  const before = Game.run; UI.toggleRun(); return Game.run !== before;
+})()`));
+await sleep(1200);
+check('the sim accepted the run toggle', await host.evaluate(`[...Host.sim.players.values()].some(p => p.run === true)`));
+check('the HUD button reflects it', await guest.evaluate(`document.getElementById('hud-run').textContent === 'Run'`));
+
+check('prayer refuses instead of pretending to work', await guest.evaluate(`(() => {
+  Game.player.prayersOn = {};
+  Game.togglePrayer(PRAYERS[0].id);
+  return Object.keys(Game.player.prayersOn).length === 0;
+})()`));
+check('the meaningless prayer bar is hidden', await guest.evaluate(`(() => {
+  UI.updateHud();
+  return document.getElementById('hud-pray-fill').closest('.hud-row').classList.contains('hidden');
+})()`));
 
 const errs = [...host.errors, ...guest.errors];
 check('no uncaught exceptions in either tab', errs.length === 0, errs.join(' | '));

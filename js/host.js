@@ -283,7 +283,7 @@ const Host = {
       t: 'welcome', id: p.id, name: display,
       you: {
         xp: p.xp, curHits: p.curHits, maxHits: this.sim.maxHits(p), inv: p.inv, worn: p.worn,
-        style: p.style, x: p.x, z: p.z, layer: p.layer
+        style: p.style, x: p.x, z: p.z, layer: p.layer, run: !!p.run
       },
       overrides: this.sim.allOverrides(),
       online: [...this.sim.players.values()].map(q => ({ id: q.id, name: q.name }))
@@ -309,6 +309,7 @@ const Host = {
       case 'wield': this.sim.intentWield(p, m.i | 0); break;
       case 'unequip': this.sim.intentUnequip(p, String(m.slot || '')); break;
       case 'style': if (m.style >= 0 && m.style < 4) { p.style = m.style | 0; this.sim.pushStats(p); } break;
+      case 'run': this.sim.intentRun(p, !!m.on); break;
     }
     this._flush();
   },

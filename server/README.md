@@ -42,7 +42,7 @@ Open `http://localhost:8787/` in a browser for a quick "server up" health check.
 
 ## Scope
 
-Shared and server-authoritative: **movement, woodcutting, mining, fishing,
+Shared and server-authoritative: **movement (walk and run), woodcutting, mining, fishing,
 combat (melee + ranged, per-weapon/NPC attack speeds, the RS2 combat triangle,
 worn equipment via wield/unequip across all six slots — head, cape, body, legs,
 weapon, shield — arrow recovery from Ava's Satchel, melee adjacency), monster
@@ -50,7 +50,7 @@ AI/aggro, loot, death, chat, and seeing other players**. NPC spawns and world
 content (farms, training yard, Hollow-folk camp, Giants' Den, town walls,
 Southmarch and the Rookmoor road) match singleplayer.
 
-Still singleplayer-only for now (they show a notice in multiplayer): banking
+Still singleplayer-only for now (they show a notice when you try): banking
 (+notes/tabs), shops, smithing/smelting, cooking, firemaking, crafting,
 fletching, farming actions, prayer, magic, and quests/dialogue (including
 Animal Magnetism's Warding Circle puzzle). Because the
