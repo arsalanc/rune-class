@@ -3102,13 +3102,18 @@ const Game = {
   // ---- The Artisan's Apprentice (skill tutorial questline) ----
   apprenticeDialogue() {
     const q = this.player.quests;
-    // each lesson: prove a skill, hand over the proof, earn a boosting chunk of xp
+    // Each lesson: prove a skill, hand over the proof, earn a boosting chunk of xp.
+    //
+    // `ask` is interpolated into three sentences below — "First lesson: X.",
+    // "Next lesson: X." and "You still need to X." — so it has to be a bare
+    // imperative verb phrase that reads correctly after "You still need to".
+    // Flavour goes after a dash, never in front of the verb.
     const STEPS = [
       { ask: 'chop 3 logs from a tree (a hatchet does it)', proof: () => this.countItem('logs') >= 3, take: () => this.removeItem('logs', 3), praise: 'Good, clean timber!', xp: { woodcut: 250 } },
       { ask: 'light 2 fires with a tinderbox on your logs', proof: () => (this.player.firesLit || 0) >= 2, take: () => {}, praise: 'A fine warm blaze!', xp: { firemaking: 250 } },
       { ask: 'mine copper and tin at the rocks, then smelt a bronze bar at the furnace', proof: () => this.hasItem('bronze_bar'), take: () => this.removeItem('bronze_bar', 1), praise: 'Solid metalwork!', xp: { mining: 250, smithing: 220 } },
       { ask: 'net a shrimp at the river, then cook it on a range or fire', proof: () => this.hasItem('shrimp'), take: () => this.removeItem('shrimp', 1), praise: 'Cooked to perfection!', xp: { fishing: 250, cooking: 250 } },
-      { ask: 'a cow carries good hide — get some leather, then use your needle on it to craft a leather coif', proof: () => this.hasItem('leather_coif'), take: () => this.removeItem('leather_coif', 1), praise: 'Beautifully stitched!', xp: { crafting: 350 } }
+      { ask: 'craft a leather coif — a cow carries good hide, so tan some leather and put your needle to it', proof: () => this.hasItem('leather_coif'), take: () => this.removeItem('leather_coif', 1), praise: 'Beautifully stitched!', xp: { crafting: 350 } }
     ];
     if (q.apprentice === 0) {
       this.dialogue([
