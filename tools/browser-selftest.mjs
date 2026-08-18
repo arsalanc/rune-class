@@ -308,6 +308,47 @@ check('walking away closes the shop', await guest.evaluate(`(async () => {
   return UI.modal !== 'shop';
 })()`));
 
+// ---------- production skills, through the real right-click menus ----------
+const menus = JSON.parse(await guest.evaluate(`(() => {
+  const out = {};
+  for (const type of ['furnace', 'anvil', 'range', 'bank_booth']) {
+    let found = null;
+    for (const [key, s] of World.L[0].scenery) if (s.type === type) { found = s; break; }
+    out[type] = found ? Game.optionsFor({ kind: 'scenery', s: found }).map(o => o.label) : null;
+  }
+  return JSON.stringify(out);
+})()`));
+check('a furnace offers Use, not a singleplayer-only notice', !!(menus.furnace || []).some(l => /^Use /.test(l)), JSON.stringify(menus.furnace));
+check('an anvil offers Use', !!(menus.anvil || []).some(l => /^Use /.test(l)), JSON.stringify(menus.anvil));
+check('a range offers Cook-on', !!(menus.range || []).some(l => /^Cook-on /.test(l)), JSON.stringify(menus.range));
+
+// Firemaking goes through useItemOnItem, the same path a player triggers by
+// selecting a tinderbox and clicking logs.
+const fireResult = JSON.parse(await host.evaluate(`(async () => {
+  const p = [...Host.clients.values()].filter(c => !c.local).map(c => Host.sim.players.get(c.pid))[0];
+  let spot = null;
+  for (let x = 60; x < 78 && !spot; x++) for (let z = 60; z < 78; z++) {
+    const t = World.L[0].tile[x][z];
+    if (!World.L[0].scenery.has(World.key(x, z)) && t !== 'water' && t !== 'floor' && !World.blocked(0, x, z)) { spot = { x, z }; break; }
+  }
+  p.layer = 0; p.path = []; p.x = spot.x + 0.5; p.z = spot.z + 0.5;
+  p.inv = [{ id: 'tinderbox', qty: 1 }, { id: 'logs', qty: 3 }];
+  p.xp = { hits: 1154, firemaking: 5000 };
+  Host.sim.pushStats(p);
+  return JSON.stringify(spot);
+})()`));
+await sleep(1200);
+await guest.evaluate(`(() => {
+  const t = Game.player.inv.findIndex(x => x && x.id === 'tinderbox');
+  const l = Game.player.inv.findIndex(x => x && x.id === 'logs');
+  Game.useItemOnItem(t, l);
+})()`);
+await sleep(1500);
+check('using a tinderbox on logs lights a fire in the shared world',
+  await host.evaluate(`(() => { const s = World.L[0].scenery.get(World.key(${fireResult.x}, ${fireResult.z})); return !!s && s.type === 'fire'; })()`));
+check('the other player sees the fire too',
+  await guest.evaluate(`(() => { const s = World.L[0].scenery.get(World.key(${fireResult.x}, ${fireResult.z})); return !!s && s.type === 'fire'; })()`));
+
 const errs = [...host.errors, ...guest.errors];
 check('no uncaught exceptions in either tab', errs.length === 0, errs.join(' | '));
 

@@ -320,6 +320,7 @@ const Host = {
       case 'buy': this.sim.intentBuy(p, String(m.id || ''), m.qty | 0); break;
       case 'sell': this.sim.intentSell(p, String(m.id || ''), m.qty | 0); break;
       case 'shopclose': this.sim.closeShop(p); break;
+      case 'firemake': this.sim.intentFiremake(p, String(m.id || '')); break;
     }
     this._flush();
   },

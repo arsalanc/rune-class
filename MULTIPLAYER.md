@@ -121,13 +121,31 @@ so a CDN outage or compromise cannot take down the crypto or quietly replace it.
 Shared and authoritative: **movement (walk and run), woodcutting, mining, fishing,
 combat (melee + ranged, per-weapon and per-NPC attack speeds, the combat triangle,
 worn equipment across all six slots, arrow recovery, melee adjacency), monster AI and
-aggro, loot, death, banking (including tabs and bank notes), shops, chat, emotes,
-ladders, dynamic events, and seeing other players.**
+aggro, loot, death, banking (including tabs and bank notes), shops, smelting,
+smithing, cooking, firemaking, chat, emotes, ladders, dynamic events, and seeing
+other players.**
 
-Still singleplayer-only, and they say so when you try: smithing/smelting, cooking,
-firemaking, crafting, fletching, farming, prayer, magic, and quests/dialogue. The
-skilling and combat maths already live in shared modules, so bringing these online is
-mostly writing the intents and the handlers.
+Still singleplayer-only, and they say so when you try: crafting, fletching, herblore,
+farming, prayer, magic, and quests/dialogue. The remaining production skills all
+share one input path — *use item on item*, with their own batch menus — so they are a
+single coherent batch rather than six separate ones.
+
+### Production skills
+
+Smelting, smithing and cooking are ordinary repeating tick actions anchored to
+scenery, and they mirror the singleplayer handlers in `game.js` one for one: one
+click works the whole inventory, and every level check and material check happens in
+the sim. The recipe tables (`SMELTS`, `SMITHABLES`, `COOKABLES`) were already shared.
+
+The cooking burn maths were **not** shared — they lived in `Game.burnChance`. They
+now live in `data.js` as pure `cookBurnChance()` / `cookStopBurn()`, which both sides
+call, for exactly the reason `combat.js` exists: otherwise the same fish would burn
+at different rates online and off.
+
+Firemaking is the odd one out. It does not act *on* scenery, it **creates** scenery
+under your feet, so it is an intent rather than a `resolveAction` case. It goes
+through `setScenery()`, which broadcasts — so everyone nearby sees your fire, and
+sees it burn out 60 seconds later via the sweep already in `slowTick()`.
 
 ### The bank
 

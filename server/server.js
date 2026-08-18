@@ -76,6 +76,7 @@ wss.on('connection', (ws) => {
       case 'buy': sim.intentBuy(p, String(m.id || ''), m.qty | 0); break;
       case 'sell': sim.intentSell(p, String(m.id || ''), m.qty | 0); break;
       case 'shopclose': sim.closeShop(p); break;
+      case 'firemake': sim.intentFiremake(p, String(m.id || '')); break;
     }
   });
 

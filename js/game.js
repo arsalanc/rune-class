@@ -358,15 +358,11 @@ const Game = {
   // stopBurn level — so every food has a level where you stop ruining it for good,
   // which is the single most satisfying thing about training Cooking. An open fire
   // is cruder than a range and takes five more levels to get there.
-  burnChance(ck, onRange) {
-    const stop = (ck.stopBurn || 30) + (onRange ? 0 : 5);
-    const lvl = this.level('cooking');
-    if (lvl >= stop) return 0;
-    const span = Math.max(1, stop - ck.lvl);
-    return ck.burnBase * Math.max(0, (stop - lvl) / span);
-  },
+  // Both delegate to the shared maths in data.js so online and offline cooking can
+  // never drift apart.
+  burnChance(ck, onRange) { return cookBurnChance(ck, this.level('cooking'), onRange); },
   // the level at which a food stops burning here — surfaced in the Cooking guide
-  stopBurnLevel(ck, onRange) { return (ck.stopBurn || 30) + (onRange ? 0 : 5); },
+  stopBurnLevel(ck, onRange) { return cookStopBurn(ck, onRange); },
 
   tickAction(now) {
     const P = this.player, a = P.action;
@@ -1474,6 +1470,14 @@ const Game = {
     if (!a || !b) return;
     const ids = [a.id, b.id];
     const logId = ids.find(id => ITEMS[id].fmXp);
+    // Firemaking is the one combination the sim knows; the rest of the item-on-item
+    // recipes (fletching, crafting, herblore) are still singleplayer-only.
+    if (this.netMode) {
+      if (ids.includes('tinderbox') && logId) { this.selectedSlot = -1; Net.firemake(logId); UI.renderInventory(); return; }
+      this.msg('That is only available in singleplayer for now.', 'm-red');
+      this.selectedSlot = -1; UI.renderInventory();
+      return;
+    }
     const knifeLog = ids.includes('knife') && ids.find(id => FLETCH_KNIFE[id]);
     // herb into a vial of water -> unfinished potion
     const herbId = ids.find(id => HERB_BY_ID[id]);
@@ -2198,8 +2202,12 @@ const Game = {
   },
 
   // in multiplayer, only the shared-world verbs are wired; the rest are singleplayer-only for now
-  netAction(kind, ref) {
+  netAction(kind, ref, extra) {
     const a = { kind };
+    // Recipe choices (which bar, which product, which raw food) ride along with the
+    // action. The sim looks each one up in the shared tables, so a bogus value just
+    // fails to match a recipe rather than making anything.
+    if (extra) Object.assign(a, extra);
     const t = ref.s || ref.n || ref.g;
     if (t) this.mark(t.x, t.z, 'action');   // same red X as singleplayer
     if (ref.s) a.key = World.key(ref.s.x, ref.s.z);
@@ -2213,23 +2221,29 @@ const Game = {
   },
   netTodo() { this.msg('That is only available in singleplayer for now.', 'm-red'); },
 
-  smeltMenu(key) {
+  // `s` is only needed in multiplayer, where the choice is sent as an intent rather
+  // than resolved locally. Singleplayer callers pass the key alone, as before.
+  smeltMenu(key, s) {
     const opts = SMELTS.map(r => ({
       label: r.name + ' (lvl ' + r.lvl + ': ' + Object.entries(r.needs).map(([id, q]) => q + ' ' + ITEMS[id].name.toLowerCase()).join(' + ') + ')',
-      cb: () => this.setAction({ type: 'smelt', key, stype: 'furnace', bar: r.bar })
+      cb: () => this.netMode
+        ? this.netAction('smelt', { s }, { bar: r.bar })
+        : this.setAction({ type: 'smelt', key, stype: 'furnace', bar: r.bar })
     }));
     opts.push({ label: 'Cancel', cb: () => {} });
     UI.showMenu(window.innerWidth / 2 - 120, window.innerHeight / 2 - 70, opts);
   },
 
-  smithMenu(key) {
+  smithMenu(key, s) {
     // only offer recipes for bar types the player is carrying
-    const bars = new Set(this.player.inv.filter(i => i && i.id.endsWith('_bar')).map(i => i.id));
+    const bars = new Set(this.player.inv.filter(i => i && !i.noted && i.id.endsWith('_bar')).map(i => i.id));
     const avail = SMITHABLES.filter(r => bars.has(r.bar));
     if (!avail.length) { this.msg('You need some metal bars to work here. Smelt ore at the furnace first.', 'm-red'); return; }
     const opts = avail.map(r => ({
       label: ITEMS[r.id].name + ' (lvl ' + r.lvl + ', ' + r.bars + ' bar' + (r.bars > 1 ? 's' : '') + ')',
-      cb: () => this.setAction({ type: 'smith', key, stype: 'anvil', product: r.id })
+      cb: () => this.netMode
+        ? this.netAction('smith', { s }, { product: r.id })
+        : this.setAction({ type: 'smith', key, stype: 'anvil', product: r.id })
     }));
     opts.push({ label: 'Cancel', cb: () => {} });
     UI.showMenu(window.innerWidth / 2 - 110, window.innerHeight / 2 - 90, opts);
@@ -3358,8 +3372,11 @@ const Game = {
       if (s.type === 'ladder_down') opts.push({ label: 'Climb-down Ladder', cb: () => this.netAction('climb', { s }) });
       if (s.type === 'ladder_up') opts.push({ label: 'Climb-up Ladder', cb: () => this.netAction('climb', { s }) });
       if (s.type === 'bank_booth') opts.push({ label: 'Use ' + def.name, cb: () => this.netAction('bank', { s }) });
-      else if (['furnace', 'anvil', 'range', 'altar'].includes(s.type))
-        opts.push({ label: 'Use ' + def.name, cb: () => this.netTodo() });
+      // The recipe pickers are pure client-side menus; only the chosen recipe is sent.
+      else if (s.type === 'furnace') opts.push({ label: 'Use ' + def.name, cb: () => this.smeltMenu(World.key(s.x, s.z), s) });
+      else if (s.type === 'anvil') opts.push({ label: 'Use ' + def.name, cb: () => this.smithMenu(World.key(s.x, s.z), s) });
+      else if (s.type === 'range' || s.type === 'fire') opts.push({ label: 'Cook-on ' + def.name, cb: () => this.netAction('cook', { s }) });
+      else if (s.type === 'altar') opts.push({ label: 'Use ' + def.name, cb: () => this.netTodo() });
       opts.push({ label: 'Examine ' + def.name, cb: () => this.msg(def.examine, 'm-game') });
     } else if (ref.kind === 'npc') {
       const n = ref.n, d = NPC_DEFS[n.type];

@@ -747,6 +747,12 @@ class Sim {
       case 'fish': return this.doFish(p, a._s, now);
       case 'attack': return this.doAttack(p, a._n, now);
       case 'take': return this.doTake(p, a._g);
+      // Production actions repeat every slow tick until the materials run out, the
+      // same way singleplayer keeps P.action set — so one click smelts a whole
+      // inventory. Each one clears p.action itself when it cannot continue.
+      case 'smelt': return this.doSmelt(p, a);
+      case 'smith': return this.doSmith(p, a);
+      case 'cook': return this.doCook(p, a);
       case 'bank': {
         p.action = null;
         if (a._s.type !== 'bank_booth') return;
@@ -767,6 +773,100 @@ class Sim {
       }
       default: p.action = null;
     }
+  }
+
+  // ---------- production ----------
+  // These mirror the singleplayer handlers in game.js tickAction() one for one; the
+  // recipe tables (SMELTS, SMITHABLES, COOKABLES) and the burn maths are shared, so
+  // only the plumbing differs. Every level check and material check happens here,
+  // never on the client.
+  doSmelt(p, a) {
+    if (a._s.type !== 'furnace') { p.action = null; return; }
+    const rec = SMELTS.find(r => r.bar === a.bar);
+    if (!rec) { p.action = null; return; }
+    if (this.level(p, 'smithing') < rec.lvl) { this.toPlayer(p, 'You need a Smithing level of ' + rec.lvl + ' to smelt that.', 'm-red'); p.action = null; return; }
+    const missing = Object.entries(rec.needs).find(([id, q]) => this.count(p, id) < q);
+    if (missing) {
+      this.toPlayer(p, 'You need ' + Object.entries(rec.needs).map(([id, q]) => q + ' ' + ITEMS[id].name.toLowerCase()).join(' and ') + ' to make a ' + rec.name.toLowerCase() + '.', 'm-red');
+      p.action = null; return;
+    }
+    for (const [id, q] of Object.entries(rec.needs)) this.remove(p, id, q);
+    // iron is a coin-flip forever, at every level — the one ore that never gets easier
+    if (rec.fail && Math.random() < rec.fail) this.toPlayer(p, 'The ore is too impure and you fail to refine it.', 'm-red');
+    else {
+      this.add(p, rec.bar, 1);
+      this.addXp(p, 'smithing', rec.xp);
+      this.toPlayer(p, 'You retrieve a ' + rec.name.toLowerCase() + ' from the furnace.', 'm-game');
+    }
+    this.pushStats(p);
+  }
+
+  doSmith(p, a) {
+    if (a._s.type !== 'anvil') { p.action = null; return; }
+    const rec = SMITHABLES.find(r => r.id === a.product);
+    if (!rec) { p.action = null; return; }
+    if (!this.has(p, 'hammer')) { this.toPlayer(p, 'You need a hammer to work the metal. The store sells them.', 'm-red'); p.action = null; return; }
+    if (this.level(p, 'smithing') < rec.lvl) { this.toPlayer(p, 'You need a Smithing level of ' + rec.lvl + ' to make that.', 'm-red'); p.action = null; return; }
+    if (this.count(p, rec.bar) < rec.bars) { this.toPlayer(p, 'You have run out of ' + ITEMS[rec.bar].name.toLowerCase() + 's.', 'm-game'); p.action = null; return; }
+    this.remove(p, rec.bar, rec.bars);
+    const qty = rec.qty || 1;
+    this.add(p, rec.id, qty);
+    this.addXp(p, 'smithing', rec.xp);
+    this.toPlayer(p, 'You hammer the metal and make ' + (qty > 1 ? qty + ' ' : 'a ') + ITEMS[rec.id].name.toLowerCase() + '.', 'm-game');
+    this.pushStats(p);
+  }
+
+  doCook(p, a) {
+    const onRange = a._s.type === 'range';
+    if (!onRange && a._s.type !== 'fire') { p.action = null; return; }
+    // Keep cooking whatever raw food is left, so one click clears the pack.
+    const rawId = (a.rawId && this.has(p, a.rawId)) ? a.rawId
+      : (p.inv.find(i => i && !i.noted && COOKABLES[i.id]) || {}).id;
+    if (!rawId) { this.toPlayer(p, 'You have nothing to cook.', 'm-game'); p.action = null; return; }
+    const ck = COOKABLES[rawId];
+    if (this.level(p, 'cooking') < ck.lvl) { this.toPlayer(p, 'You need a Cooking level of ' + ck.lvl + ' to cook this.', 'm-red'); p.action = null; return; }
+    this.remove(p, rawId, 1);
+    if (Math.random() < cookBurnChance(ck, this.level(p, 'cooking'), onRange)) {
+      this.add(p, ck.burnt, 1);
+      this.toPlayer(p, 'You accidentally burn the ' + ITEMS[ck.cooked].name.toLowerCase() + '.', 'm-red');
+    } else {
+      this.add(p, ck.cooked, 1);
+      this.addXp(p, 'cooking', ck.xp);
+      this.toPlayer(p, 'The ' + ITEMS[ck.cooked].name.toLowerCase() + ' is now nicely cooked.', 'm-game');
+    }
+    this.pushStats(p);
+  }
+
+  // Firemaking is not anchored to scenery — it *creates* scenery under your feet, so
+  // it is an intent rather than a resolveAction case. The fire's 60s expiry is
+  // already handled by the scenery sweep in slowTick().
+  intentFiremake(p, logId) {
+    const it = p.inv.find(i => i && !i.noted && i.id === logId);
+    if (!it || !ITEMS[logId] || !ITEMS[logId].fmXp) return;
+    if (!this.has(p, 'tinderbox')) { this.toPlayer(p, 'You need a tinderbox to light that.', 'm-red'); return; }
+    if (p.layer !== 0) { this.toPlayer(p, "You can't light a fire down here.", 'm-red'); return; }
+    const x = Math.floor(p.x), z = Math.floor(p.z);
+    const lay = World.L[0];
+    if (lay.scenery.has(World.key(x, z)) || lay.tile[x][z] === 'water' || lay.tile[x][z] === 'floor') {
+      this.toPlayer(p, "You can't light a fire here.", 'm-red'); return;
+    }
+    const need = ITEMS[logId].fmLvl || 1;
+    if (this.level(p, 'firemaking') < need) {
+      this.toPlayer(p, 'You need a Firemaking level of ' + need + ' to get ' + ITEMS[logId].name.toLowerCase() + ' alight.', 'm-red');
+      return;
+    }
+    if (Math.random() < Math.min(0.95, 0.4 + this.level(p, 'firemaking') * 0.03)) {
+      this.remove(p, logId, 1);
+      // setScenery broadcasts, so everyone nearby sees the fire — and its expiry.
+      this.setScenery(0, x, z, 'fire', null, 0);
+      const s = World.L[0].scenery.get(World.key(x, z));
+      if (s) { s.expireAt = Date.now() + 60000; s.respawnAt = 0; }
+      this.addXp(p, 'firemaking', ITEMS[logId].fmXp || 40);
+      this.toPlayer(p, 'The fire catches and the logs begin to burn.', 'm-game');
+      // step off the fire, as singleplayer does
+      if (!World.blocked(0, x - 1, z)) p.path = [{ x: x - 1, z }];
+      this.pushStats(p);
+    } else this.toPlayer(p, 'You attempt to light the fire but fail.', 'm-game');
   }
 
   doChop(p, s, now) {

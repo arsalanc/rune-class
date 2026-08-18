@@ -432,5 +432,9 @@ const Net = {
   shopOpen(npcId) { this.send({ t: 'shopopen', npcId }); },
   buy(id, qty) { this.send({ t: 'buy', id, qty }); },
   sell(id, qty) { this.send({ t: 'sell', id, qty }); },
-  shopClose() { this.send({ t: 'shopclose' }); }
+  shopClose() { this.send({ t: 'shopclose' }); },
+
+  // Firemaking creates scenery under your feet rather than acting on some, so it is
+  // its own intent rather than an action with a target.
+  firemake(id) { this.send({ t: 'firemake', id }); }
 };

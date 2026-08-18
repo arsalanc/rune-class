@@ -467,7 +467,7 @@ const CRAFTABLES = [
 ];
 
 // `stopBurn` is the Cooking level at which this stops burning ON A RANGE for good;
-// an open fire is cruder, so it takes 5 more levels there (see Game.burnChance).
+// an open fire is cruder, so it takes 5 more levels there (see cookBurnChance).
 // Burn odds fall from burnBase at the unlock level to zero at stopBurn.
 const COOKABLES = {
   raw_shrimp:    { cooked: 'shrimp', burnt: 'burnt_shrimp', lvl: 1, xp: 30, burnBase: 0.45, stopBurn: 24 },
@@ -475,6 +475,19 @@ const COOKABLES = {
   raw_trout:     { cooked: 'trout', burnt: 'burnt_fish', lvl: 15, xp: 70, burnBase: 0.55, stopBurn: 40 },
   raw_salmon:    { cooked: 'salmon', burnt: 'burnt_fish', lvl: 25, xp: 90, burnBase: 0.6, stopBurn: 52 }
 };
+
+// Pure burn maths, shared by singleplayer (Game.burnChance) and the authoritative
+// sim, for the same reason combat.js exists: if the two ever computed burn odds
+// differently, the same fish would burn at different rates online and off.
+// Every food has a level where you stop ruining it for good, which is the single
+// most satisfying thing about training Cooking.
+function cookStopBurn(ck, onRange) { return (ck.stopBurn || 30) + (onRange ? 0 : 5); }
+function cookBurnChance(ck, cookingLevel, onRange) {
+  const stop = cookStopBurn(ck, onRange);
+  if (cookingLevel >= stop) return 0;
+  const span = Math.max(1, stop - ck.lvl);
+  return ck.burnBase * Math.max(0, (stop - cookingLevel) / span);
+}
 
 // ---------------------------------------------------------------------------
 // The spellbook. Laid out in the order it is drawn — reading order across a

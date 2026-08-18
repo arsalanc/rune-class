@@ -344,6 +344,96 @@ host.Host.sim._gtick = 39; host.Host.sim.slowTick(Date.now());
 check('stock drifts back toward its starting level', drained.qty === low + Math.sign(drained.initial - low),
   low + ' -> ' + drained.qty + ' (initial ' + drained.initial + ')');
 
+// --- production skills ---
+// All four are authoritative: the client picks a recipe, the sim checks the level,
+// consumes the materials and awards the xp.
+const simP = () => host.Host.sim.players.get(hostSidePlayer.pid);
+const findScenery = (type) => {
+  for (const [key, s] of host.World.L[0].scenery) if (s.type === type) return { key, s };
+  return null;
+};
+const standAt = (p, s) => { p.x = s.x + 1.5; p.z = s.z + 0.5; p.layer = 0; p.path = []; };
+
+// smelting
+const furnace = findScenery('furnace');
+check('the world has a furnace', !!furnace);
+standAt(simP(), furnace.s);
+simP().inv = [{ id: 'copper_ore', qty: 3 }, { id: 'tin_ore', qty: 3 }, { id: 'hammer', qty: 1 }];
+simP().xp = { hits: 1154 };
+guest.Net.action({ kind: 'smelt', key: furnace.key, bar: 'bronze_bar' });
+await sleep(2000);
+check('smelting turns ore into bars', host.Host.sim.count(simP(), 'bronze_bar') > 0,
+  'bars=' + host.Host.sim.count(simP(), 'bronze_bar'));
+check('smelting consumes the ore', host.Host.sim.count(simP(), 'copper_ore') < 3);
+check('smelting awards Smithing xp', (simP().xp.smithing || 0) > 0);
+check('it repeats until the ore runs out', host.Host.sim.count(simP(), 'copper_ore') === 0,
+  'copper left=' + host.Host.sim.count(simP(), 'copper_ore'));
+
+// a level gate the client cannot talk its way past
+standAt(simP(), furnace.s);
+simP().inv = [{ id: 'mithril_ore', qty: 2 }, { id: 'coal', qty: 8 }];
+guest.Net.action({ kind: 'smelt', key: furnace.key, bar: 'mithril_bar' });
+await sleep(900);
+check('a recipe above your level is refused', host.Host.sim.count(simP(), 'mithril_bar') === 0);
+
+// smithing
+const anvil = findScenery('anvil');
+check('the world has an anvil', !!anvil);
+standAt(simP(), anvil.s);
+simP().inv = [{ id: 'bronze_bar', qty: 3 }, { id: 'hammer', qty: 1 }];
+guest.Net.action({ kind: 'smith', key: anvil.key, product: 'bronze_sword' });
+await sleep(1500);
+check('smithing makes the product', host.Host.sim.count(simP(), 'bronze_sword') > 0);
+check('smithing consumes bars', host.Host.sim.count(simP(), 'bronze_bar') < 3);
+
+// smithing without a hammer is refused
+standAt(simP(), anvil.s);
+simP().inv = [{ id: 'bronze_bar', qty: 2 }];
+guest.Net.action({ kind: 'smith', key: anvil.key, product: 'bronze_sword' });
+await sleep(900);
+check('smithing without a hammer is refused', host.Host.sim.count(simP(), 'bronze_bar') === 2);
+
+// cooking
+const range = findScenery('range');
+check('the world has a range', !!range);
+standAt(simP(), range.s);
+simP().inv = [{ id: 'raw_shrimp', qty: 4 }];
+guest.Net.action({ kind: 'cook', key: range.key });
+await sleep(2500);
+const cooked = host.Host.sim.count(simP(), 'shrimp'), burnt = host.Host.sim.count(simP(), 'burnt_shrimp');
+check('cooking consumes the raw food', host.Host.sim.count(simP(), 'raw_shrimp') === 0);
+check('and produces cooked or burnt food', cooked + burnt === 4, 'cooked=' + cooked + ' burnt=' + burnt);
+
+// firemaking
+const p = simP();
+p.layer = 0; p.path = [];
+// a clear grass tile with nothing already on it
+let spot = null;
+for (let x = 60; x < 75 && !spot; x++) for (let z = 60; z < 75; z++) {
+  const t = host.World.L[0].tile[x][z];
+  if (!host.World.L[0].scenery.has(host.World.key(x, z)) && t !== 'water' && t !== 'floor' && !host.World.blocked(0, x, z)) { spot = { x, z }; break; }
+}
+check('found somewhere to light a fire', !!spot);
+p.x = spot.x + 0.5; p.z = spot.z + 0.5;
+p.inv = [{ id: 'tinderbox', qty: 1 }, { id: 'logs', qty: 6 }];
+p.xp = { hits: 1154, firemaking: 5000 };   // high enough that the roll effectively always succeeds
+for (let i = 0; i < 6; i++) { guest.Net.firemake('logs'); await sleep(200); }
+await sleep(600);
+const lit = host.World.L[0].scenery.get(host.World.key(spot.x, spot.z));
+check('lighting logs creates a fire', !!lit && lit.type === 'fire');
+check('the fire has an expiry so it burns out', !!lit && lit.expireAt > 0);
+check('lighting consumed a log', host.Host.sim.count(simP(), 'logs') < 6);
+check('firemaking awarded xp', (simP().xp.firemaking || 0) > 5000);
+
+// no tinderbox, no fire
+const spot2 = { x: spot.x + 3, z: spot.z };
+simP().x = spot2.x + 0.5; simP().z = spot2.z + 0.5;
+simP().inv = [{ id: 'logs', qty: 2 }];
+guest.Net.firemake('logs');
+await sleep(500);
+check('lighting a fire without a tinderbox is refused',
+  !host.World.L[0].scenery.has(host.World.key(spot2.x, spot2.z)));
+
 // --- the character save survives a disconnect ---
 guest.Net.transport.close();
 await sleep(300);
