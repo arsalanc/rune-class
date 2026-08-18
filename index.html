@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rune Classic</title>
+<!-- Inline so there is no favicon request to 404 on a static host. -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23241f18'/><path d='M8 2l1.6 3.4L13 6.2l-2.5 2.5.6 3.5L8 10.6 4.9 12.2l.6-3.5L3 6.2l3.4-.8z' fill='%23ffe97a'/></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hover"></div>
+<div id="hud">
+  <div class="hud-row"><span class="hud-lbl">HP</span><div class="hud-bar"><div id="hud-hp-fill" class="hud-fill hp"></div><span id="hud-hp-txt" class="hud-txt"></span></div></div>
+  <div class="hud-row"><span class="hud-lbl">PR</span><div class="hud-bar"><div id="hud-pray-fill" class="hud-fill pray"></div><span id="hud-pray-txt" class="hud-txt"></span></div></div>
+  <button id="hud-run" title="Toggle run (R)">Walk</button>
+</div>
+<div id="minimap-wrap">
+  <canvas id="minimap" width="156" height="156"></canvas>
+  <button id="btn-map" title="World map (M)">🗺</button>
+</div>
+<div id="levelup" class="hidden"></div>
+<div id="eventbar" class="hidden"></div>
+<div id="side">
+  <!-- RS2-style split tab bars: character/gameplay on top, system below -->
+  <div id="tabs" class="tabbar">
+    <button class="tab" data-tab="combat">Combat</button>
+    <button class="tab" data-tab="stats">Stats</button>
+    <button class="tab" data-tab="quest">Quest</button>
+    <button class="tab active" data-tab="inv">Inv</button>
+    <button class="tab" data-tab="worn">Worn</button>
+    <button class="tab" data-tab="pray">Pray</button>
+    <button class="tab" data-tab="magic">Magic</button>
+  </div>
+  <div class="panel" id="panel-inv"><div id="invgrid"></div></div>
+  <div class="panel hidden" id="panel-worn"><div id="equip"></div></div>
+  <div class="panel hidden" id="panel-combat"><div id="combatpanel"></div></div>
+  <div class="panel hidden" id="panel-stats"><div id="statlist"></div></div>
+  <div class="panel hidden" id="panel-pray"><div id="praylist"></div></div>
+  <div class="panel hidden" id="panel-magic"><div id="magiclist"></div></div>
+  <div class="panel hidden" id="panel-quest"><div id="questlist"></div></div>
+  <div class="panel hidden" id="panel-emotes"><div id="emotelist"></div></div>
+  <div class="panel hidden" id="panel-opts">
+    <button id="btn-save">Save game</button>
+    <button id="btn-sound">Sound: on</button>
+    <button id="btn-music">Music: on</button>
+    <button id="btn-renderer">Engine: Canvas 2.5D</button>
+    <button id="btn-hud-reset">Reset HUD layout</button>
+    <button id="btn-reset">Reset save</button>
+    <div class="mp">
+      <div class="mp-title">Multiplayer (beta)</div>
+      <div id="mp-tabs" class="mp-tabs">
+        <button class="mp-tab active" data-mp="join">Join</button>
+        <button class="mp-tab" data-mp="host">Host</button>
+        <button class="mp-tab" data-mp="lan">LAN</button>
+      </div>
+
+      <!-- Join a friend's browser-hosted world over WebRTC -->
+      <div class="mp-pane" id="mp-pane-join">
+        <input id="mp-world" placeholder="World ID (rc-xxxxxx-xxxxxx)" autocomplete="off" spellcheck="false">
+        <input id="mp-name" maxlength="16" placeholder="Character name" autocomplete="off">
+        <input id="mp-pass" type="password" placeholder="Character password" autocomplete="off">
+        <input id="mp-invite" placeholder="Invite code (first time only)" autocomplete="off" spellcheck="false">
+        <button id="btn-join">Join world</button>
+        <div class="hint">Your friend hosts the world in their browser. Ask them for the <b>World ID</b>, plus the <b>invite code</b> the first time you play — after that your own password is all you need.</div>
+      </div>
+
+      <!-- Host a world from this tab -->
+      <div class="mp-pane hidden" id="mp-pane-host">
+        <input id="mp-host-name" maxlength="16" placeholder="Your character name" autocomplete="off">
+        <button id="btn-host">Open my world</button>
+        <div id="mp-host-info" class="hidden">
+          <label class="mp-lbl">World ID <button class="mp-copy" data-copy="mp-host-id">copy</button></label>
+          <div class="mp-code" id="mp-host-id"></div>
+          <label class="mp-lbl">Invite code <button class="mp-copy" data-copy="mp-host-invite">copy</button></label>
+          <div class="mp-code" id="mp-host-invite"></div>
+          <div id="mp-roster" class="mp-roster"></div>
+        </div>
+        <div class="hint">The world runs in this tab and stops when you close it. Keep it open and visible — a backgrounded tab is throttled by the browser and the world will run choppily for everyone.</div>
+      </div>
+
+      <!-- The original Node server, still here for LAN play -->
+      <div class="mp-pane hidden" id="mp-pane-lan">
+        <input id="mp-lan-name" maxlength="16" placeholder="Character name" autocomplete="off">
+        <input id="mp-url" placeholder="server (e.g. localhost:8787)" autocomplete="off" value="localhost:8787">
+        <button id="btn-connect">Join shared world</button>
+        <div class="hint">Connects to a Node server run from <code>server/</code> with <code>npm start</code>. No password — fine on a LAN, don't expose it to the internet.</div>
+      </div>
+
+      <div id="mp-status" class="mp-status"></div>
+      <div class="hint">Shared gathering, combat &amp; chat. Banking, smithing, quests &amp; magic stay singleplayer for now.</div>
+    </div>
+    <div class="hint">Left-click: default action<br>Right-click: choose option<br>Arrow keys: rotate camera<br>Mouse wheel: zoom<br>Enter: chat (multiplayer)<br>Esc: close windows<br><b>Alt+drag</b>: move HUD panels</div>
+  </div>
+  <div id="tabs-bottom" class="tabbar">
+    <button class="tab" data-tab="emotes">Emotes</button>
+    <button class="tab" data-tab="opts">Opts</button>
+  </div>
+</div>
+<div id="chat"></div>
+<div id="chatbar" class="hidden"><input id="chatinput" maxlength="120" placeholder="Press Enter to chat..." autocomplete="off"></div>
+<div id="dialoguebox" class="hidden">
+  <canvas id="dlg-portrait" width="80" height="80"></canvas>
+  <div id="dlg-main">
+    <div id="dlg-name"></div>
+    <div id="dlg-text"></div>
+    <div id="dlg-choices"></div>
+    <div id="dlg-cont">Click here to continue ▸</div>
+  </div>
+</div>
+<div id="ctxmenu" class="hidden"></div>
+<div id="modal" class="hidden">
+  <div id="modal-box">
+    <div id="modal-head"><span id="modal-title"></span><button id="modal-close">✕</button></div>
+    <div id="modal-note"></div>
+    <div id="modal-bar"></div>
+    <div id="modal-grid"></div>
+    <div id="modal-foot"></div>
+  </div>
+</div>
+<div id="worldmap" class="hidden">
+  <div id="wm-box">
+    <div id="wm-head">
+      <span id="wm-title">World Map</span>
+      <div id="wm-tools">
+        <button class="wm-layer" data-layer="0">Surface</button><button class="wm-layer" data-layer="1">Dungeon</button>
+        <span class="wm-sep"></span>
+        <button id="wm-zout" title="Zoom out">−</button><span id="wm-zoom">100%</span><button id="wm-zin" title="Zoom in">+</button>
+        <button id="wm-fit" title="Fit the whole map">Fit</button><button id="wm-me" title="Centre on me and ping">Find me</button>
+      </div>
+      <button id="wm-close">✕</button>
+    </div>
+    <div id="wm-body">
+      <canvas id="wmcanvas"></canvas>
+      <div id="wm-key"></div>
+    </div>
+    <div class="wm-hint">Click the map to travel • drag to pan • wheel to zoom • <b>Find me</b> pings your position • M or Esc to close</div>
+  </div>
+</div>
+<div id="guide" class="hidden">
+  <div id="guide-box">
+    <div id="guide-head"><span id="guide-title"></span><button id="guide-close">✕</button></div>
+    <div id="guide-body"></div>
+  </div>
+</div>
+<script src="js/data.js"></script>
+<script src="js/combat.js"></script>
+<script src="js/events.js"></script>
+<script src="js/world.js"></script>
+<script src="js/sound.js"></script>
+<script src="js/renderer.js"></script>
+<script src="js/gl-lib.js"></script>
+<script src="js/gl.js"></script>
+<script src="js/gl-models.js"></script>
+<!-- Peer-to-peer hosting. Vendored, not CDN-loaded, so the game keeps working
+     offline and a broken CDN can never swap the crypto out from under it. -->
+<script src="js/vendor/peerjs.min.js"></script>
+<script src="js/vendor/noble-ristretto255.js"></script>
+<script src="js/pake.js"></script>
+<script src="js/store.js"></script>
+<script src="js/sim.js"></script>
+<script src="js/host.js"></script>
+<script src="js/net.js"></script>
+<script src="js/icons.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>

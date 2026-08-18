@@ -1,0 +1,16 @@
+{
+  "name": "rune-classic",
+  "version": "0.5.0",
+  "private": true,
+  "description": "Browser RuneScape-Classic-like RPG: singleplayer, peer-to-peer multiplayer, and an optional Node server",
+  "scripts": {
+    "test": "node tools/pake-selftest.mjs && node tools/p2p-selftest.mjs",
+    "test:pake": "node tools/pake-selftest.mjs",
+    "test:p2p": "node tools/p2p-selftest.mjs",
+    "test:browser": "node tools/browser-selftest.mjs",
+    "test:all": "npm test && npm run test:browser",
+    "serve": "node tools/serve.mjs",
+    "server": "node server/server.js",
+    "vendor": "sh tools/build-vendor.sh"
+  }
+}

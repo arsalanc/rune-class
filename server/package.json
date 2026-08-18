@@ -1,0 +1,13 @@
+{
+  "name": "rune-classic-server",
+  "version": "0.4.0",
+  "private": true,
+  "description": "Authoritative multiplayer server for Rune Classic",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

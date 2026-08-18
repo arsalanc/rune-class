@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rune Classic — model viewer</title>
+<!--
+  A dev tool, not part of the game. Open it straight from file:// like index.html.
+
+  It drives the REAL renderers: it loads the same gl-lib/gl/gl-models the game does and
+  draws through GLRenderer.drawModel and CanvasRenderer.drawScenery. If it renders
+  something the game would not, the harness is wrong — that is the whole point of it.
+
+  Why it exists: iterating on a model used to mean editing gl-models.js, writing a
+  Playwright script, screenshotting and squinting. Here you edit and press F5.
+-->
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #14161a;
+               font: 13px/1.45 Verdana, Geneva, sans-serif; color: #d8d4c8; }
+  canvas#game { display: block; }
+  /* the GL overlay that GLRenderer.init() inserts sits at z-index 1 */
+  #c2d { position: fixed; top: 0; right: 0; height: 100%; z-index: 2; background: #10222e;
+         border-left: 2px solid #3a3f47; display: none; }
+  #ui { position: fixed; inset: 0 auto auto 0; z-index: 3; padding: 10px; pointer-events: none; }
+  #ui > * { pointer-events: auto; }
+  .bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+         background: rgba(18,20,24,0.88); border: 1px solid #3a3f47; border-radius: 5px; padding: 7px 9px; }
+  button { font: inherit; color: #e8e2d2; background: #2b3038; border: 1px solid #454b55;
+           border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+  button:hover { background: #363d47; }
+  button.on { background: #6a5a2a; border-color: #a8912f; color: #fff8dc; }
+  #meta { opacity: .72; margin-left: 4px; }
+  #list { position: fixed; left: 10px; top: 62px; bottom: 10px; width: 210px; z-index: 3;
+          overflow-y: auto; background: rgba(18,20,24,0.9); border: 1px solid #3a3f47;
+          border-radius: 5px; padding: 6px; display: none; }
+  #list div { padding: 3px 7px; border-radius: 3px; cursor: pointer; white-space: nowrap;
+              overflow: hidden; text-overflow: ellipsis; }
+  #list div:hover { background: #2f353d; }
+  #list div.on { background: #6a5a2a; color: #fff8dc; }
+  #hint { position: fixed; left: 10px; bottom: 10px; z-index: 3; opacity: .55; font-size: 12px; }
+  #err { position: fixed; left: 50%; top: 40%; transform: translateX(-50%); z-index: 9;
+         background: #5a1f1f; border: 1px solid #a33; padding: 14px 18px; border-radius: 5px;
+         max-width: 70vw; display: none; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<canvas id="c2d"></canvas>
+
+<div id="ui">
+  <div class="bar">
+    <button id="m-gallery" class="on">Gallery</button>
+    <button id="m-single">Turntable</button>
+    <button id="m-compare">GL vs Canvas</button>
+    <button id="spin">Spin: on</button>
+    <span id="meta"></span>
+  </div>
+</div>
+<div id="list"></div>
+<div id="hint">drag to orbit &middot; wheel to zoom &middot; F5 after editing gl-models.js</div>
+<div id="err"></div>
+
+<!-- Same load order as index.html. game.js/ui.js/net.js are deliberately absent —
+     the harness talks to the renderers directly. -->
+<script src="../js/data.js"></script>
+<script src="../js/world.js"></script>
+<script src="../js/renderer.js"></script>
+<script src="../js/gl-lib.js"></script>
+<script src="../js/gl.js"></script>
+<script src="../js/gl-models.js"></script>
+<script>
+'use strict';
+(function () {
+  const errBox = document.getElementById('err');
+  const fail = (e) => { errBox.style.display = 'block'; errBox.textContent = 'Model viewer error:\n' + (e && e.stack || e); };
+  window.addEventListener('error', ev => fail(ev.error || ev.message));
+
+  // ---------------------------------------------------------------------------
+  // Capture model bounds. _bake() uploads the vertex array and throws the CPU copy
+  // away, so there is no way to measure a model after the fact — wrap it BEFORE
+  // init() runs _buildModels() and stash the extents on the returned handle.
+  // This patches only the live object; no game file is touched.
+  // ---------------------------------------------------------------------------
+  const _origBake = GLRenderer._bake;
+  GLRenderer._bake = function (a) {
+    const r = _origBake.call(this, a);
+    let mnx = 1e9, mny = 1e9, mnz = 1e9, mxx = -1e9, mxy = -1e9, mxz = -1e9;
+    for (let i = 0; i < a.length; i += 9) {
+      if (a[i] < mnx) mnx = a[i];       if (a[i] > mxx) mxx = a[i];
+      if (a[i + 1] < mny) mny = a[i + 1]; if (a[i + 1] > mxy) mxy = a[i + 1];
+      if (a[i + 2] < mnz) mnz = a[i + 2]; if (a[i + 2] > mxz) mxz = a[i + 2];
+    }
+    r.bounds = { mnx, mny, mnz, mxx, mxy, mxz,
+                 w: mxx - mnx, h: mxy - mny, d: mxz - mnz,
+                 cx: (mnx + mxx) / 2, cz: (mnz + mxz) / 2 };
+    return r;
+  };
+
+  try { World.gen(); } catch (e) { fail(e); }        // compare mode needs heightAt
+  try { GLRenderer.init(); } catch (e) { fail(e); }
+  const R = GLRenderer, gl = R.gl;
+
+  const NAMES = Object.keys(R.models).sort();
+  const TRIS = n => R.models[n].count / 3;
+  const totalTris = NAMES.reduce((t, n) => t + TRIS(n), 0);
+
+  // scenery types drawn by BOTH renderers — the only place a GL/canvas comparison
+  // is meaningful. Derived from the data, so it tracks new scenery automatically.
+  const SCENERY = Object.keys(SCENERY_DEFS).sort();
+
+  // ---------------------------------------------------------------------------
+  // camera
+  // ---------------------------------------------------------------------------
+  let mode = 'gallery', sel = NAMES[0], spin = true;
+  let yaw = 2.35, pitch = 0.55, dist = 14, target = [0, 0.8, 0], drag = null;
+
+  const cv = R.canvas;
+  cv.addEventListener('mousedown', e => { drag = { x: e.clientX, y: e.clientY }; });
+  window.addEventListener('mouseup', () => { drag = null; });
+  window.addEventListener('mousemove', e => {
+    if (!drag) return;
+    yaw -= (e.clientX - drag.x) * 0.01;
+    pitch = Math.max(-0.2, Math.min(1.45, pitch + (e.clientY - drag.y) * 0.006));
+    drag = { x: e.clientX, y: e.clientY };
+  });
+  cv.addEventListener('wheel', e => {
+    e.preventDefault();
+    dist = Math.max(1.2, Math.min(90, dist * (e.deltaY > 0 ? 1.1 : 0.9)));
+  }, { passive: false });
+
+  // Per-frame uniform setup, mirroring GLRenderer.draw() (js/gl.js:313-326) but with
+  // our own camera and the fog pushed far away so nothing hazes out in a preview.
+  function frame(now) {
+    const cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const tx = target[0], ty = target[1], tz = target[2];
+    const ex = tx + Math.sin(yaw) * dist * cp, ey = ty + dist * sp, ez = tz + Math.cos(yaw) * dist * cp;
+    R._fogS = 1e6; R._fogR = 1e6;
+    const fog = [0.078, 0.086, 0.102];
+    R._vp = M4.mul(M4.perspective(0.95, R.W / R.H, 0.1, 4000), M4.lookAt(ex, ey, ez, tx, ty, tz, 0, 1, 0));
+    gl.viewport(0, 0, R.W, R.H);
+    gl.clearColor(fog[0], fog[1], fog[2], 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.useProgram(R.prog);
+    gl.uniformMatrix4fv(R.loc.u_viewProj, false, R._vp);
+    gl.uniform3fv(R.loc.u_camPos, [ex, ey, ez]);
+    gl.uniform3fv(R.loc.u_lightDir, [0.5, 0.9, 0.35]);   // same light as the game
+    gl.uniform1f(R.loc.u_ambient, 0.74);
+    gl.uniform3fv(R.loc.u_fogColor, fog);
+    gl.uniform1f(R.loc.u_fogStart, R._fogS);
+    gl.uniform1f(R.loc.u_fogRange, R._fogR);
+    gl.uniform1f(R.loc.u_alpha, 1);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.uniform1i(R.loc.u_tex, 0);
+    gl.bindTexture(gl.TEXTURE_2D, R._atlas);
+    R.octx.clearRect(0, 0, R.W, R.H);
+  }
+
+  // Fit any model into a uniform cube so a rat and a rampart can sit side by side.
+  const CELL = 3.0, FIT = 1.85;
+  function placed(name, gx, gy, gz) {
+    const b = R.models[name].bounds;
+    const k = FIT / Math.max(b.w, b.h, b.d, 0.001);
+    return M4.mul(M4.mul(M4.translate(gx, gy, gz), M4.scale(k, k, k)),
+                  M4.translate(-b.cx, -b.mny, -b.cz));
+  }
+
+  function fitSingle() {
+    const b = R.models[sel] && R.models[sel].bounds;
+    dist = b ? Math.max(b.w, b.h, b.d) * 1.7 + 1.6 : 6;
+  }
+
+  function label(text, wx, wy, wz, col) {
+    const p = R.project(wx, wy, wz);
+    if (!p) return;
+    const c = R.octx;
+    c.font = '11px Verdana'; c.textAlign = 'center'; c.textBaseline = 'top';
+    c.fillStyle = 'rgba(0,0,0,0.75)'; c.fillText(text, p.x + 1, p.y + 1);
+    c.fillStyle = col || '#d8d4c8'; c.fillText(text, p.x, p.y);
+  }
+
+  // ---------------------------------------------------------------------------
+  // modes
+  // ---------------------------------------------------------------------------
+  // Wider than tall: the window is landscape, so more columns than rows wastes less
+  // space, and a high pitch spreads the rows apart so the labels stop colliding.
+  function galleryGrid() {
+    const cols = Math.ceil(Math.sqrt(NAMES.length * (R.W / R.H) * 0.8));
+    const rows = Math.ceil(NAMES.length / cols);
+    return { cols, rows, spanX: (cols - 1) * CELL, spanZ: (rows - 1) * CELL };
+  }
+  function drawGallery(now) {
+    const { cols, spanX, spanZ } = galleryGrid();
+    target = [0, 0.6, 0];
+    frame(now);
+    const at = i => [(i % cols) * CELL - spanX / 2, Math.floor(i / cols) * CELL - spanZ / 2];
+    NAMES.forEach((n, i) => {
+      const [gx, gz] = at(i);
+      // a plinth, so a dark model is never lost against a dark background
+      R.box(M4.mul(M4.translate(gx, -0.06, gz), M4.scale(2.2, 0.12, 2.2)), [0.22, 0.24, 0.27]);
+      R.drawModel(n, placed(n, gx, 0, gz));
+    });
+    // labels last, so nothing is drawn over them
+    NAMES.forEach((n, i) => {
+      const [gx, gz] = at(i);
+      label(n + '  ' + TRIS(n), gx, -0.12, gz + 1.15);
+    });
+  }
+
+  function drawSingle(now) {
+    const b = R.models[sel].bounds;
+    target = [0, Math.max(0.5, b.h * 0.45), 0];
+    frame(now);
+    R.box(M4.mul(M4.translate(0, -0.04, 0), M4.scale(Math.max(2.4, b.w * 1.6), 0.08, Math.max(2.4, b.d * 1.6))), [0.22, 0.24, 0.27]);
+    const turn = spin ? M4.rotY(now / 2600) : M4.rotY(0);
+    R.drawModel(sel, M4.mul(M4.mul(M4.translate(0, 0, 0), turn), M4.translate(-b.cx, -b.mny, -b.cz)));
+    label(sel + '  ·  ' + TRIS(sel) + ' tris  ·  ' +
+          b.w.toFixed(2) + ' × ' + b.h.toFixed(2) + ' × ' + b.d.toFixed(2), 0, -0.08, 0, '#f0c869');
+  }
+
+  // The two renderers were authored independently — same scenery type, two separate
+  // implementations. This is where drift shows up, so show them together.
+  function drawCompare(now) {
+    const s = { type: sel, x: 96, z: 96, respawnAt: 0, rune: (ALTAR_BY_RUNE[sel.replace('rune_', '')] ? sel.replace('rune_', '') : 'nature') };
+    if (sel === 'rune_altar') s.rune = 'nature';
+    const cx = s.x + 0.5, cz = s.z + 0.5;
+    const y = World.heightAt(0, cx, cz);
+    target = [cx, y + 1.0, cz];
+    dist = Math.min(dist, 14);
+    frame(now);
+    try { R.drawScenery(s, 0, now); } catch (e) { label('GL threw: ' + e.message, cx, y + 2.6, cz, '#ff8080'); }
+    R.clickables.length = 0;                       // drawScenery pushes pick boxes; drop them
+    label(sel + ' — WebGL', cx, y - 0.1, cz, '#f0c869');
+
+    // canvas side, drawn straight into the 2D pane with a synthetic projection
+    const c2 = document.getElementById('c2d');
+    const ctx = c2.getContext('2d');
+    ctx.clearRect(0, 0, c2.width, c2.height);
+    const saveCtx = CanvasRenderer.ctx, saveS = CanvasRenderer._fogS, saveR = CanvasRenderer._fogR;
+    CanvasRenderer.ctx = ctx;
+    CanvasRenderer._fogS = 1e9; CanvasRenderer._fogR = 1;   // fogA(0) -> 0, so alpha stays 1
+    try {
+      CanvasRenderer.drawScenery(s, { x: c2.width / 2, y: c2.height * 0.66, d: 0 }, 150, now, 0);
+    } catch (e) {
+      ctx.fillStyle = '#ff8080'; ctx.font = '13px Verdana'; ctx.textAlign = 'center';
+      ctx.fillText('canvas threw: ' + e.message, c2.width / 2, 40);
+    }
+    CanvasRenderer.ctx = saveCtx; CanvasRenderer._fogS = saveS; CanvasRenderer._fogR = saveR;
+    ctx.fillStyle = '#f0c869'; ctx.font = '12px Verdana'; ctx.textAlign = 'center';
+    ctx.fillText(sel + ' — Canvas', c2.width / 2, c2.height - 16);
+  }
+
+  // ---------------------------------------------------------------------------
+  // ui
+  // ---------------------------------------------------------------------------
+  const listEl = document.getElementById('list');
+  const c2d = document.getElementById('c2d');
+
+  function names() { return mode === 'compare' ? SCENERY : NAMES; }
+
+  function buildList() {
+    listEl.innerHTML = '';
+    for (const n of names()) {
+      const d = document.createElement('div');
+      d.textContent = mode === 'compare' ? n : n + '  (' + TRIS(n) + ')';
+      if (n === sel) d.className = 'on';
+      d.addEventListener('click', () => { sel = n; if (mode === 'single') fitSingle(); buildList(); });
+      listEl.appendChild(d);
+    }
+  }
+
+  function setMode(m) {
+    mode = m;
+    for (const [id, k] of [['m-gallery', 'gallery'], ['m-single', 'single'], ['m-compare', 'compare']])
+      document.getElementById(id).classList.toggle('on', k === m);
+    listEl.style.display = m === 'gallery' ? 'none' : 'block';
+    c2d.style.display = m === 'compare' ? 'block' : 'none';
+    if (m === 'compare' && !SCENERY.includes(sel)) sel = 'tree';
+    if (m === 'single' && !NAMES.includes(sel)) sel = NAMES[0];
+    resize();
+    if (m === 'gallery') {
+      // frame the whole grid rather than guessing a distance
+      // near the in-game 3/4 view — high enough to separate the rows, low enough
+      // that a model still reads as a solid rather than a silhouette
+      const { spanX, spanZ } = galleryGrid();
+      yaw = 0; pitch = 0.72;
+      // Fit from the real frustum rather than guessed multipliers. The row nearest the
+      // camera is spanZ/2 closer than the grid centre and so needs the most width.
+      const FOV_Y = 0.95, tanY = Math.tan(FOV_Y / 2), tanX = tanY * (R.W / R.H);
+      const halfW = spanX / 2 + CELL * 0.7, halfD = spanZ / 2 + CELL * 0.7;
+      dist = Math.max(halfW / tanX, halfD / tanY) * 1.15 + 2;
+    } else if (m === 'single') {
+      yaw = 2.35; pitch = 0.4; fitSingle();
+    } else {
+      // Baked models face +z, and the canvas versions are always drawn face-on, so look
+      // down +z or the comparison shows a model's back against the other's front.
+      yaw = 0; pitch = 0.32; dist = 5.5;
+    }
+    buildList();
+    document.getElementById('meta').textContent =
+      m === 'compare' ? SCENERY.length + ' scenery types'
+                      : NAMES.length + ' models · ' + totalTris + ' tris total';
+  }
+  document.getElementById('m-gallery').addEventListener('click', () => setMode('gallery'));
+  document.getElementById('m-single').addEventListener('click', () => setMode('single'));
+  document.getElementById('m-compare').addEventListener('click', () => setMode('compare'));
+  document.getElementById('spin').addEventListener('click', e => {
+    spin = !spin; e.target.textContent = 'Spin: ' + (spin ? 'on' : 'off');
+  });
+  // clicking a model in the gallery opens it on the turntable
+  cv.addEventListener('dblclick', () => { if (mode === 'gallery') setMode('single'); });
+
+  function resize() {
+    const half = mode === 'compare';
+    c2d.width = half ? Math.floor(window.innerWidth / 2) : 0;
+    c2d.height = window.innerHeight;
+    c2d.style.width = c2d.width + 'px';
+    R.W = R.canvas.width = R.overlay.width = half ? window.innerWidth - c2d.width : window.innerWidth;
+    R.H = R.canvas.height = R.overlay.height = window.innerHeight;
+    R.canvas.style.width = R.W + 'px'; R.overlay.style.width = R.W + 'px';
+  }
+  window.addEventListener('resize', resize);
+
+  function loop(now) {
+    try {
+      if (mode === 'gallery') drawGallery(now);
+      else if (mode === 'single') drawSingle(now);
+      else drawCompare(now);
+    } catch (e) { fail(e); return; }
+    requestAnimationFrame(loop);
+  }
+  setMode('gallery');
+  requestAnimationFrame(loop);
+
+  // exposed so a headless check can assert on what actually rendered
+  window.Viewer = { names: NAMES, scenery: SCENERY, tris: TRIS, totalTris,
+                    setMode, select: n => { sel = n; if (mode === 'single') fitSingle(); buildList(); },
+                    get mode() { return mode; } };
+})();
+</script>
+</body>
+</html>
