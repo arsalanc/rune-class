@@ -46,13 +46,13 @@ Shared and server-authoritative: **movement (walk and run), woodcutting, mining,
 combat (melee + ranged, per-weapon/NPC attack speeds, the RS2 combat triangle,
 worn equipment via wield/unequip across all six slots — head, cape, body, legs,
 weapon, shield — arrow recovery from Ava's Satchel, melee adjacency), monster
-AI/aggro, loot, death, banking (tabs and bank notes included), chat, and seeing
-other players**. NPC spawns and world
+AI/aggro, loot, death, banking (tabs and bank notes included), shops with
+shared stock, chat, and seeing other players**. NPC spawns and world
 content (farms, training yard, Hollow-folk camp, Giants' Den, town walls,
 Southmarch and the Rookmoor road) match singleplayer.
 
 Still singleplayer-only for now (they show a notice when you try):
-shops, smithing/smelting, cooking, firemaking, crafting,
+smithing/smelting, cooking, firemaking, crafting,
 fletching, farming actions, prayer, magic, and quests/dialogue (including
 Animal Magnetism's Warding Circle puzzle). Because the
 combat/skilling maths are now shared modules, bringing these online later is

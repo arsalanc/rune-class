@@ -72,6 +72,10 @@ wss.on('connection', (ws) => {
       case 'bankwd': sim.intentBankWithdraw(p, String(m.id || ''), m.qty | 0, !!m.note); break;
       case 'banktab': sim.intentBankTab(p, String(m.id || ''), m.tab | 0); break;
       case 'bankclose': sim.closeBank(p); break;
+      case 'shopopen': sim.intentShopOpen(p, m.npcId | 0); break;
+      case 'buy': sim.intentBuy(p, String(m.id || ''), m.qty | 0); break;
+      case 'sell': sim.intentSell(p, String(m.id || ''), m.qty | 0); break;
+      case 'shopclose': sim.closeShop(p); break;
     }
   });
 

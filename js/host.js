@@ -316,6 +316,10 @@ const Host = {
       case 'bankwd': this.sim.intentBankWithdraw(p, String(m.id || ''), m.qty | 0, !!m.note); break;
       case 'banktab': this.sim.intentBankTab(p, String(m.id || ''), m.tab | 0); break;
       case 'bankclose': this.sim.closeBank(p); break;
+      case 'shopopen': this.sim.intentShopOpen(p, m.npcId | 0); break;
+      case 'buy': this.sim.intentBuy(p, String(m.id || ''), m.qty | 0); break;
+      case 'sell': this.sim.intentSell(p, String(m.id || ''), m.qty | 0); break;
+      case 'shopclose': this.sim.closeShop(p); break;
     }
     this._flush();
   },

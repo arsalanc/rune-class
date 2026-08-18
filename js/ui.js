@@ -1076,9 +1076,12 @@ const UI = {
   },
 
   closeModal() {
-    // Tell the authority the box is shut, so it stops accepting bank operations from
-    // us. Harmless if it already knows — closeBank() is idempotent.
-    if (this.modal === 'bank' && Game.netMode) Net.bankClose();
+    // Tell the authority the counter is shut, so it stops accepting operations from
+    // us. Harmless if it already knows — both closers are idempotent.
+    if (Game.netMode) {
+      if (this.modal === 'bank') Net.bankClose();
+      else if (this.modal === 'shop') Net.shopClose();
+    }
     this.modal = null;
     this.els.modal.classList.add('hidden');
     this.els.mfoot.innerHTML = '';

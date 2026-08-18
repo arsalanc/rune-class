@@ -23,6 +23,12 @@ class Sim {
     this.itemSpawns = [{ id: 'ancient_relic', layer: 1, x: 74, z: 60, respawnAt: 0 }];
     this.sceneryOverrides = new Map(); // "layer:key" -> {layer,key,x,z,stype|null}
     this.events = [];               // {kind, ...} drained each loop by the transport
+    // Shop stock is *shared world state*, not per-player — unlike the bank. Two
+    // people at the same counter drain the same shelf, which is the whole point of
+    // shopping in a shared world. Same shape singleplayer builds in Game.init().
+    this.shops = {};
+    for (const [id, def] of Object.entries(SHOP_DEFS))
+      this.shops[id] = def.stock.map(([iid, qty, price]) => ({ id: iid, qty, initial: qty, price }));
     this._tick = 0;
     this._gtick = 0;                // game-tick counter (one per 600ms slow tick) — drives attack speeds
     this.spawnNpcs();
@@ -409,6 +415,95 @@ class Sim {
     this.pushBank(p);
   }
 
+  // ---------- shops ----------
+  // Shared stock, so every change has to reach everyone standing at that counter —
+  // not just whoever caused it. Otherwise two players buy the last sword each.
+  pushShop(p, open) {
+    this.emit({ kind: 'to', id: p.id, msg: { t: 'shop', open: open !== false, shop: p.shopId, stock: this.shops[p.shopId] || [] } });
+  }
+  pushShopToViewers(shopId, chimeFor) {
+    for (const q of this.players.values()) {
+      if (q.shopId !== shopId) continue;
+      this.emit({ kind: 'to', id: q.id, msg: { t: 'shop', open: true, shop: shopId, stock: this.shops[shopId] || [], chime: q.id === chimeFor } });
+    }
+  }
+  closeShop(p, tell) {
+    if (!p.shopId) return;
+    p.shopId = null; p.shopNpcId = 0;
+    this.emit({ kind: 'to', id: p.id, msg: { t: 'shop', open: false } });
+    if (tell) this.toPlayer(p, 'You finish trading.', 'm-game');
+  }
+
+  // Re-checked before every transaction, like the bank's atBank().
+  atShop(p) {
+    if (!p.shopId || !this.shops[p.shopId]) return false;
+    const n = this.npcs.find(m => m.id === p.shopNpcId);
+    if (!n || n.deadUntil || n.layer !== p.layer) return false;
+    const d = NPC_DEFS[n.type];
+    if (!d || d.trade !== p.shopId) return false;
+    return Math.max(Math.abs(Math.floor(p.x) - n.x), Math.abs(Math.floor(p.z) - n.z)) <= 1;
+  }
+  shopOp(p) { if (!this.atShop(p)) { this.closeShop(p); return false; } return true; }
+
+  shopCurrency(shopId) { return (SHOP_DEFS[shopId] || {}).currency || 'coins'; }
+  shopPrice(st) { return st.price !== undefined ? st.price : ITEMS[st.id].value; }
+
+  intentShopOpen(p, npcId) {
+    const n = this.npcs.find(m => m.id === (npcId | 0));
+    if (!n || n.deadUntil || n.layer !== p.layer) return;
+    const d = NPC_DEFS[n.type];
+    // Ghostly traders are gated behind quest progress the sim does not model, so
+    // they stay shut here rather than being silently free to everyone.
+    if (!d || !d.trade || d.ghostly || !this.shops[d.trade]) return;
+    if (Math.max(Math.abs(Math.floor(p.x) - n.x), Math.abs(Math.floor(p.z) - n.z)) > 1) return;
+    this.closeBank(p);
+    p.shopId = d.trade; p.shopNpcId = n.id;
+    this.pushShop(p, true);
+  }
+
+  intentBuy(p, id, qty) {
+    if (!this.shopOp(p)) return;
+    const shop = this.shops[p.shopId];
+    const st = shop.find(s => s.id === id);
+    if (!st) { this.toPlayer(p, 'The shop has run out of stock.', 'm-red'); return; }
+    const cur = this.shopCurrency(p.shopId), price = this.shopPrice(st);
+    let bought = 0;
+    for (let i = 0; i < Math.max(0, qty | 0); i++) {
+      if (st.qty <= 0) { this.toPlayer(p, 'The shop has run out of stock.', 'm-red'); break; }
+      if (this.count(p, cur) < price) { this.toPlayer(p, "You don't have enough " + ITEMS[cur].name.toLowerCase() + '.', 'm-red'); break; }
+      if (!this.add(p, id, 1)) { this.toPlayer(p, "You can't carry any more.", 'm-red'); break; }
+      this.remove(p, cur, price);
+      st.qty--; bought++;
+    }
+    if (!bought) return;
+    this.pushStats(p);
+    this.pushShopToViewers(p.shopId, p.id);   // everyone at this counter sees the shelf drop
+  }
+
+  intentSell(p, id, qty) {
+    if (!this.shopOp(p)) return;
+    const def = ITEMS[id];
+    if (!def) return;
+    if (this.shopCurrency(p.shopId) !== 'coins') { this.toPlayer(p, 'They have no use for that, and no coin to offer you.', 'm-red'); return; }
+    if (!def.value || def.quest) { this.toPlayer(p, "You can't sell that.", 'm-red'); return; }
+    const sd = SHOP_DEFS[p.shopId] || {};
+    // A shop always buys back what it stocks, whatever category that lands in.
+    const stocksIt = (sd.stock || []).some(s => s[0] === id);
+    if (sd.accepts && !stocksIt && !sd.accepts.includes(shopCategory(id))) {
+      this.toPlayer(p, sd.name + ' deals in ' + sd.accepts.map(c => SHOP_CAT_NAME[c]).join(' and ') + '. Try the general store for that.', 'm-red');
+      return;
+    }
+    qty = Math.min(qty | 0, this.count(p, id));   // count() skips notes, so you cannot sell a receipt
+    if (qty <= 0) return;
+    this.remove(p, id, qty);
+    this.add(p, 'coins', Math.floor(def.value * 0.6) * qty);
+    const shop = this.shops[p.shopId];
+    const st = shop.find(s => s.id === id);
+    if (st) st.qty += qty; else shop.push({ id, qty, initial: 0 });
+    this.pushStats(p);
+    this.pushShopToViewers(p.shopId, p.id);
+  }
+
   // ---------- intents from clients ----------
   // Run is a plain speed toggle here, exactly as in singleplayer — there is no
   // energy system to drain. Movement speed is applied in step(), so the client
@@ -417,7 +512,7 @@ class Sim {
 
   intentWalk(p, x, z) {
     p.action = null;
-    this.closeBank(p);              // walking off closes the window, as in RS2
+    this.closeBank(p); this.closeShop(p);   // walking off closes both counters, as in RS2
     const path = World.findPath(p.layer, Math.floor(p.x), Math.floor(p.z), x, z);
     if (path) p.path = path;
   }
@@ -429,6 +524,7 @@ class Sim {
     // Doing anything else shuts the box — including walking to a different booth,
     // which re-opens it on arrival with the right key.
     if (!a || a.kind !== 'bank') this.closeBank(p);
+    this.closeShop(p);
     p.action = a;
     p.path = [];
   }
@@ -501,6 +597,15 @@ class Sim {
 
   slowTick(now) {
     this._gtick++;               // one game tick (600ms) — drives player & NPC attack speeds
+    // Stock drifts one step back toward its starting level every 40 game ticks — the
+    // same cadence and the same Math.sign drift singleplayer uses, so a shop refills
+    // after a raid and sheds anything players over-sold into it.
+    if (this._gtick % 40 === 0) {
+      const moved = new Set();
+      for (const [sid, shop] of Object.entries(this.shops))
+        for (const st of shop) { const d = Math.sign(st.initial - st.qty); if (d) { st.qty += d; moved.add(sid); } }
+      for (const sid of moved) this.pushShopToViewers(sid);
+    }
     Events.tick(this.eventCtx);
     // scenery respawns / fire expiry
     for (let l = 0; l < 2; l++) {
@@ -655,7 +760,7 @@ class Sim {
       case 'climb': {
         p.layer = a._s.type === 'ladder_down' ? 1 : 0;
         p.action = null;
-        this.closeBank(p);
+        this.closeBank(p); this.closeShop(p);
         this.toPlayer(p, p.layer === 1 ? 'You climb down into the darkness...' : 'You climb up to the light.', 'm-game');
         this.emit({ kind: 'to', id: p.id, msg: { t: 'layer', layer: p.layer, x: p.x, z: p.z } });
         return;
@@ -894,7 +999,7 @@ class Sim {
 
   killPlayer(p, now) {
     this.toPlayer(p, 'Oh dear! You are dead...', 'm-red');
-    this.closeBank(p);              // you respawn in town, not at the booth
+    this.closeBank(p); this.closeShop(p);   // you respawn in town, not at the counter
     // keep 3 most valuable stacks, drop the rest where you fell
     const dx = Math.floor(p.x), dz = Math.floor(p.z), dl = p.layer;
     // rank pack AND worn gear together; keep the 3 best (+ quest items) in place, drop the rest

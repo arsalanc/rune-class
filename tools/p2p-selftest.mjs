@@ -105,18 +105,20 @@ function makeRealm(tag) {
   // Stand-ins for the parts of the client net.js talks to.
   vm.runInContext(`
     var Sound = { ensure() {}, play() {} };
-    var Game = { player: {}, players: [], npcs: [], ground: [], netMode: false, eventHud: [], run: false };
+    var Game = { player: {}, players: [], npcs: [], ground: [], netMode: false, eventHud: [], run: false,
+                 shops: {}, activeShop: 'general' };
     var UI = {
       modal: null,
       addMessage(t, c) { __messages.push({ t, c }); },
       refresh() {}, renderInventory() {}, renderStats() {}, renderEquipment() {},
       renderEventBanner() {}, syncRunButton() {},
-      openBank() { this.modal = 'bank'; }, renderBank() {}, closeModal() { this.modal = null; }
+      openBank() { this.modal = 'bank'; }, renderBank() {}, closeModal() { this.modal = null; },
+      openShop(id) { this.modal = 'shop'; }, renderShop() {}
     };
   `, ctx, { filename: 'stubs.js' });
 
   vm.runInContext(read('net.js'), ctx, { filename: 'net.js' });
-  vm.runInContext('var __x = { Host, Net, PAKE, Sim, World, Game, UI };', ctx, { filename: 'export.js' });
+  vm.runInContext('var __x = { Host, Net, PAKE, Sim, World, Game, UI, NPC_DEFS, ITEMS, SHOP_DEFS };', ctx, { filename: 'export.js' });
   return { ...ctx.__x, messages, ctx };
 }
 
@@ -270,6 +272,77 @@ await sleep(400);
 check('a bank operation from out of range is refused',
   (P().bank.find(b => b.id === 'logs') || {}).qty === bankedBefore);
 check('and the window is closed', P().bankKey === null);
+
+// --- shops: shared stock, unlike the per-player bank ---
+// A tradeable, non-ghostly shopkeeper straight from the sim's NPC list.
+const trader = host.Host.sim.npcs.find(n => {
+  const d = host.NPC_DEFS[n.type];
+  return d && d.trade && !d.ghostly && host.Host.sim.shops[d.trade];
+});
+check('the world has a shopkeeper to trade with', !!trader, trader && trader.type);
+
+const shopId = trader ? host.NPC_DEFS[trader.type].trade : null;
+const guestP = () => host.Host.sim.players.get(hostSidePlayer.pid);
+const hostP = () => { const c = [...host.Host.clients.values()].find(x => x.local); return host.Host.sim.players.get(c.pid); };
+
+// Shopkeepers wander, and the sim re-checks range on every transaction — so step
+// back onto the keeper's *current* tile before each operation rather than once.
+const standAtShop = (p) => { p.x = trader.x + 0.5; p.z = trader.z + 0.5; p.layer = trader.layer; p.path = []; };
+const reopen = async (realm, p) => { standAtShop(p); realm.Net.shopOpen(trader.id); await sleep(400); };
+
+guestP().inv = [{ id: 'coins', qty: 100000 }];
+await reopen(guest, guestP());
+check('trading with a shopkeeper opens the shop', guestP().shopId === shopId);
+check('the guest received the stock', Array.isArray(guest.Game.shops[shopId]));
+
+const line = host.Host.sim.shops[shopId].find(s => s.qty > 0);
+const stockBefore = line.qty;
+guest.Net.buy(line.id, 1);
+await sleep(500);
+check('buying takes one off the shelf', line.qty === stockBefore - 1, line.qty + ' vs ' + stockBefore);
+check('and puts it in the pack', host.Host.sim.count(guestP(), line.id) >= 1 || guestP().inv.some(i => i.id === line.id));
+
+// The point of shared stock: the host is standing at the same counter and sees it move.
+hostP().inv = [{ id: 'coins', qty: 100000 }];
+await reopen(host, hostP());
+check('a second player can open the same shop', hostP().shopId === shopId);
+
+const seenByHost = () => (host.Game.shops[shopId] || []).find(s => s.id === line.id);
+check('the second player sees the already-reduced stock', seenByHost() && seenByHost().qty === line.qty,
+  seenByHost() && seenByHost().qty);
+
+await reopen(guest, guestP());
+const before2 = line.qty;
+guest.Net.buy(line.id, 1);
+await sleep(600);
+check("one player buying updates the other player's view",
+  seenByHost() && seenByHost().qty === before2 - 1,
+  'host sees ' + (seenByHost() || {}).qty + ', sim has ' + line.qty);
+
+// Buying with no money must not hand out goods.
+await reopen(guest, guestP());
+const brokeStock = line.qty;
+guestP().inv = [];
+guest.Net.buy(line.id, 5);
+await sleep(500);
+check('you cannot buy with an empty purse', line.qty === brokeStock);
+
+// Out of range is refused, same as the bank.
+guestP().inv = [{ id: 'coins', qty: 100000 }];
+await reopen(guest, guestP());
+guestP().x = trader.x + 25; guestP().z = trader.z + 25;   // teleport away without walking
+const farStock = line.qty;
+guest.Net.buy(line.id, 1);
+await sleep(500);
+check('buying from out of range is refused', line.qty === farStock);
+check('and the shop window is closed', guestP().shopId === null);
+
+// Restock drifts back toward the starting level.
+const drained = host.Host.sim.shops[shopId].find(s => s.id === line.id);
+const low = drained.qty;
+host.Host.sim._gtick = 39; host.Host.sim.slowTick(Date.now());
+check('stock drifts back toward its starting level', drained.qty === low + Math.sign(drained.initial - low),
+  low + ' -> ' + drained.qty + ' (initial ' + drained.initial + ')');
 
 // --- the character save survives a disconnect ---
 guest.Net.transport.close();

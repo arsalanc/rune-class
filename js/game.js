@@ -1309,13 +1309,15 @@ const Game = {
   invClick(i) {
     const P = this.player, it = P.inv[i];
     if (!it) return;
-    // With the bank open, a click deposits — in both modes. This has to come before
-    // the netMode branch below, or clicking an item at the booth would wield it.
+    // A counter being open changes what a click means, in both modes. These have to
+    // come before the netMode branch, or clicking an item at a bank or shop would
+    // wield it instead of banking or selling it.
     if (UI.modal === 'bank') {
       if (it.noted) this.depositSlot(i, this.bankResolveQty(it.qty));
       else this.deposit(it.id, this.bankResolveQty(this.countItem(it.id)));
       return;
     }
+    if (UI.modal === 'shop') { if (it.noted) { this.msg('Un-note that at a bank before selling it.', 'm-game'); return; } this.sell(it.id, 1); return; }
     if (this.netMode) {
       const def = ITEMS[it.id];
       if (it.noted) this.msg('This is a bank note. Take it to a bank to reclaim the item.', 'm-game');
@@ -1324,7 +1326,6 @@ const Game = {
       else this.msg(def.name + ' — right-click to drop. Crafting and questing are singleplayer-only for now.', 'm-game');
       return;
     }
-    if (UI.modal === 'shop') { if (it.noted) { this.msg('Un-note that at a bank before selling it.', 'm-game'); return; } this.sell(it.id, 1); return; }
     if (it.noted) { this.msg('This is a bank note. Take it to a bank to reclaim the item.', 'm-game'); return; }
     // a utility spell armed in the spellbook fires at whatever you click next
     if (this.selectedSpell) {
@@ -1354,9 +1355,9 @@ const Game = {
     const it = this.player.inv[i];
     if (!it) return [];
     const def = ITEMS[it.id], opts = [];
-    // The bank branch comes first in both modes: deposit()/depositSlot() know how to
-    // route themselves, so these options are identical online and off.
-    if (UI.modal !== 'bank' && this.netMode) {
+    // The bank and shop branches come first in both modes: deposit()/sell() know how
+    // to route themselves, so those options are identical online and off.
+    if (UI.modal !== 'bank' && UI.modal !== 'shop' && this.netMode) {
       if (it.noted) {
         opts.push({ label: 'Drop ' + def.name + ' note', cb: () => Net.drop(i) });
         opts.push({ label: 'Examine ' + def.name, cb: () => this.msg('A bank note worth ' + it.qty + ' × ' + def.name.toLowerCase() + '. Reclaim it at a bank.', 'm-game') });
@@ -2394,6 +2395,7 @@ const Game = {
   shopPrice(st) { return st.price !== undefined ? st.price : ITEMS[st.id].value; },
 
   buy(id, qty) {
+    if (this.netMode) { Net.buy(id, qty); return; }   // shared stock: the sim decides
     const shop = this.shops[this.activeShop];
     const st = shop.find(s => s.id === id);
     if (!st) { this.msg('The shop has run out of stock.', 'm-red'); return; }
@@ -2410,6 +2412,7 @@ const Game = {
   },
 
   sell(id, qty) {
+    if (this.netMode) { Net.sell(id, qty); return; }
     const def = ITEMS[id];
     if (this.shopCurrency() !== 'coins') { this.msg('Marrow has no use for that, and no coin to offer you.', 'm-red'); return; }
     if (!def.value || def.quest) { this.msg("You can't sell that.", 'm-red'); return; }
@@ -3373,6 +3376,9 @@ const Game = {
           cb: () => this.netAction('attack', { n })
         });
       } else opts.push({ label: 'Talk-to ' + d.name, cb: () => this.netTodo() });
+      // Ghostly traders stay shut online — they are gated behind quest progress the
+      // sim does not model, so opening them would hand out a quest reward for free.
+      if (d.trade && !d.ghostly) opts.push({ label: 'Trade ' + d.name, cb: () => { this.mark(n.x !== undefined ? n.x : n.fx, n.z !== undefined ? n.z : n.fz, 'action'); Net.shopOpen(n.id); } });
       opts.push({ label: 'Examine ' + d.name, cb: () => this.msg(d.examine, 'm-game') });
     } else if (ref.kind === 'ground') {
       const g = ref.g, def = ITEMS[g.id];

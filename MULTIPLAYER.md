@@ -121,13 +121,13 @@ so a CDN outage or compromise cannot take down the crypto or quietly replace it.
 Shared and authoritative: **movement (walk and run), woodcutting, mining, fishing,
 combat (melee + ranged, per-weapon and per-NPC attack speeds, the combat triangle,
 worn equipment across all six slots, arrow recovery, melee adjacency), monster AI and
-aggro, loot, death, banking (including tabs and bank notes), chat, emotes, ladders,
-dynamic events, and seeing other players.**
+aggro, loot, death, banking (including tabs and bank notes), shops, chat, emotes,
+ladders, dynamic events, and seeing other players.**
 
-Still singleplayer-only, and they say so when you try: shops, smithing/smelting,
-cooking, firemaking, crafting, fletching, farming, prayer, magic, and
-quests/dialogue. The skilling and combat maths already live in shared modules, so
-bringing these online is mostly writing the intents and the handlers.
+Still singleplayer-only, and they say so when you try: smithing/smelting, cooking,
+firemaking, crafting, fletching, farming, prayer, magic, and quests/dialogue. The
+skilling and combat maths already live in shared modules, so bringing these online is
+mostly writing the intents and the handlers.
 
 ### The bank
 
@@ -148,6 +148,25 @@ Two things the sim has to police, because the client is not trusted:
   up** and through the death drop. Miss any one of those and a note for 1000 logs
   becomes 1000 logs: `doTake` would mint them, or `bestArrow` would fire arrows
   straight out of the receipt.
+
+### Shops, and why they differ from the bank
+
+Everything else so far is *per-player* state. Shop stock is **shared world state**:
+one `this.shops` on the sim, and two people at the same counter drain the same shelf.
+That is the whole point of shopping in a shared world, and it changes the plumbing.
+
+- A transaction pushes to **every player with that shop open**, not just the buyer —
+  `pushShopToViewers()`. Otherwise two players each buy the last sword.
+- The `chime` flag marks which push was *your* transaction, so the coin sound plays
+  for the buyer and not for everyone watching the shelf move.
+- Stock drifts one step back toward its starting level every 40 game ticks, the same
+  `Math.sign` drift singleplayer uses — so a shop refills after a raid and also sheds
+  anything players over-sold into it.
+- Range is re-checked per transaction like the bank, but against a **moving target**:
+  shopkeepers wander, so `atShop()` measures against the NPC's current tile. (This
+  caught a test of mine that assumed the keeper stayed put.)
+- Ghostly traders stay shut online — they are gated behind quest progress the sim does
+  not model, so opening them would hand out a quest reward for free.
 
 Two rules of thumb from doing this:
 

@@ -265,6 +265,49 @@ check('walking away closes the bank', await guest.evaluate(`(async () => {
   return UI.modal !== 'bank';
 })()`));
 
+// ---------- shops: shared stock, driven through the real UI ----------
+const trader = JSON.parse(await host.evaluate(`(() => {
+  const n = Host.sim.npcs.find(n => { const d = NPC_DEFS[n.type]; return d && d.trade && !d.ghostly && Host.sim.shops[d.trade]; });
+  if (!n) return 'null';
+  const p = [...Host.clients.values()].filter(c => !c.local).map(c => Host.sim.players.get(c.pid))[0];
+  p.x = n.x + 0.5; p.z = n.z + 0.5; p.layer = n.layer; p.path = [];
+  p.inv = [{ id: 'coins', qty: 100000 }];
+  Host.sim.pushStats(p);
+  return JSON.stringify({ id: n.id, shop: NPC_DEFS[n.type].trade });
+})()`));
+check('found a shopkeeper', !!trader);
+await sleep(1000);
+
+await guest.evaluate(`Net.shopOpen(${trader.id})`);
+await sleep(1500);
+check('the shop window opened on the guest', await guest.evaluate(`UI.modal === 'shop'`));
+check('it is showing the shared stock', await guest.evaluate(`Array.isArray(Game.shops[${JSON.stringify(trader.shop)}])`));
+
+const firstItem = await guest.evaluate(`(Game.shops[${JSON.stringify(trader.shop)}].find(s => s.qty > 0) || {}).id`);
+const stockBefore = await host.evaluate(`(Host.sim.shops[${JSON.stringify(trader.shop)}].find(s => s.id === ${JSON.stringify(firstItem)}) || {}).qty`);
+await guest.evaluate(`Game.buy(${JSON.stringify(firstItem)}, 1)`);
+await sleep(1200);
+check('buying through the UI takes stock off the shared shelf',
+  await host.evaluate(`(Host.sim.shops[${JSON.stringify(trader.shop)}].find(s => s.id === ${JSON.stringify(firstItem)}) || {}).qty`) === stockBefore - 1);
+check('and the guest sees the reduced stock',
+  await guest.evaluate(`(Game.shops[${JSON.stringify(trader.shop)}].find(s => s.id === ${JSON.stringify(firstItem)}) || {}).qty`) === stockBefore - 1);
+check("the item is in the guest's pack",
+  await guest.evaluate(`Game.player.inv.some(x => x && x.id === ${JSON.stringify(firstItem)})`));
+
+// Faking local stock must not conjure goods, exactly as with the bank mirror.
+check('inventing stock in the local shop mirror gets you nothing', await guest.evaluate(`(async () => {
+  Game.shops[${JSON.stringify(trader.shop)}].push({ id: 'rune_sword', qty: 99, price: 1 });
+  Game.buy('rune_sword', 1);
+  await new Promise(r => setTimeout(r, 900));
+  return !Game.player.inv.some(x => x && x.id === 'rune_sword');
+})()`));
+
+check('walking away closes the shop', await guest.evaluate(`(async () => {
+  Net.walk(64, 64);
+  await new Promise(r => setTimeout(r, 1200));
+  return UI.modal !== 'shop';
+})()`));
+
 const errs = [...host.errors, ...guest.errors];
 check('no uncaught exceptions in either tab', errs.length === 0, errs.join(' | '));
 

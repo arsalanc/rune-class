@@ -234,6 +234,7 @@ const Net = {
       case 'chat': return this.onChat(m);
       case 'emote': return this.onEmote(m);
       case 'bank': return this.onBank(m);
+      case 'shop': return this.onShop(m);
       case 'scenery': return this.applyScenery(m);
       case 'layer': {
         Game.player.layer = m.layer; Game.player.x = m.x; Game.player.z = m.z;
@@ -314,6 +315,17 @@ const Net = {
     if (m.open === false) { if (UI.modal === 'bank') UI.closeModal(); return; }
     if (UI.modal === 'bank') UI.renderBank();
     else UI.openBank();
+  },
+
+  // Shop stock is shared world state. This can arrive because we bought something,
+  // because someone else at the same counter did, or because the shelf restocked —
+  // so it always redraws rather than assuming we caused it.
+  onShop(m) {
+    if (m.open === false) { if (UI.modal === 'shop') UI.closeModal(); return; }
+    if (m.shop) { Game.activeShop = m.shop; Game.shops[m.shop] = m.stock || []; }
+    if (UI.modal === 'shop') UI.renderShop();
+    else UI.openShop(m.shop);
+    if (m.chime) Sound.play('coins');     // only for our own transaction
   },
 
   onChat(m) {
@@ -412,5 +424,13 @@ const Net = {
   bankDepositAll() { this.send({ t: 'bankdepall' }); },
   bankWithdraw(id, qty, note) { this.send({ t: 'bankwd', id, qty, note: !!note }); },
   bankTab(id, tab) { this.send({ t: 'banktab', id, tab }); },
-  bankClose() { this.send({ t: 'bankclose' }); }
+  bankClose() { this.send({ t: 'bankclose' }); },
+
+  // ---------- shops ----------
+  // Stock is shared, so the reply may also arrive because *someone else* bought
+  // something at the same counter.
+  shopOpen(npcId) { this.send({ t: 'shopopen', npcId }); },
+  buy(id, qty) { this.send({ t: 'buy', id, qty }); },
+  sell(id, qty) { this.send({ t: 'sell', id, qty }); },
+  shopClose() { this.send({ t: 'shopclose' }); }
 };
