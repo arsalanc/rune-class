@@ -106,12 +106,13 @@ function makeRealm(tag) {
   vm.runInContext(`
     var Sound = { ensure() {}, play() {} };
     var Game = { player: {}, players: [], npcs: [], ground: [], netMode: false, eventHud: [], run: false,
-                 shops: {}, activeShop: 'general' };
+                 shops: {}, activeShop: 'general',
+                 emptyQuests() { return {}; } };
     var UI = {
       modal: null,
       addMessage(t, c) { __messages.push({ t, c }); },
       refresh() {}, renderInventory() {}, renderStats() {}, renderEquipment() {},
-      renderEventBanner() {}, syncRunButton() {},
+      renderEventBanner() {}, syncRunButton() {}, renderQuests() {},
       openBank() { this.modal = 'bank'; }, renderBank() {}, closeModal() { this.modal = null; },
       openShop(id) { this.modal = 'shop'; }, renderShop() {}
     };
@@ -433,6 +434,39 @@ guest.Net.firemake('logs');
 await sleep(500);
 check('lighting a fire without a tinderbox is refused',
   !host.World.L[0].scenery.has(host.World.key(spot2.x, spot2.z)));
+
+// --- quests: progress is per-player, and the sim polices every step ---
+simP().inv = [];
+simP().quests = {};
+guest.Net.questStep('lunch');
+await sleep(400);
+check('accepting a quest advances it', simP().quests.lunch === 1);
+check('the guest sees its own quest progress', (guest.Game.player.quests || {}).lunch === 1);
+
+// The whole point of server-side validation: ask to hand in without the goods.
+guest.Net.questStep('lunch');
+await sleep(400);
+check('handing in without the items is refused', simP().quests.lunch === 1);
+check('and no reward was paid', host.Host.sim.count(simP(), 'coins') === 0);
+
+host.Host.sim.add(simP(), 'shrimp', 3);
+guest.Net.questStep('lunch');
+await sleep(400);
+check('handing in with the items completes the step', simP().quests.lunch === 2);
+check('the reward was paid', host.Host.sim.count(simP(), 'coins') === 100);
+check('the items were consumed', host.Host.sim.count(simP(), 'shrimp') === 0);
+check('xp was awarded', (simP().xp.cooking || 0) === 300);
+
+// Spamming a finished quest must not pay twice.
+host.Host.sim.add(simP(), 'shrimp', 3);
+guest.Net.questStep('lunch');
+await sleep(400);
+check('a completed quest cannot be farmed', host.Host.sim.count(simP(), 'coins') === 100 && simP().quests.lunch === 2);
+
+// Progress is per-player: the host's own character is untouched by all of that.
+const hostQuests = (() => { const c = [...host.Host.clients.values()].find(x => x.local); return host.Host.sim.players.get(c.pid).quests || {}; })();
+check('quest progress is per-player, not shared', !hostQuests.lunch,
+  'host sees lunch=' + hostQuests.lunch);
 
 // --- the character save survives a disconnect ---
 guest.Net.transport.close();

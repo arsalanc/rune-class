@@ -2221,6 +2221,19 @@ const Game = {
   },
   netTodo() { this.msg('That is only available in singleplayer for now.', 'm-red'); },
 
+  // NPCs whose dialogue is safe to run in a shared world: either pure flavour, or a
+  // quest whose steps live in QUEST_STEPS and are therefore re-checked by the sim.
+  // Everything else still says so, because its dialogue mutates player state
+  // directly and the authority would never see it.
+  NET_TALK: ['guide', 'banker', 'instructor', 'townsman', 'townswoman', 'villager', 'bartender', 'innkeeper', 'farmer', 'farmhand', 'marshal'],
+  netTalkTo(n) {
+    const d = NPC_DEFS[n.type];
+    if (!this.NET_TALK.includes(n.type)) return this.netTodo();
+    this.dialogueNpc = n;
+    this.mark(n.x !== undefined ? n.x : n.fx, n.z !== undefined ? n.z : n.fz, 'action');
+    this.talkTo(n);
+  },
+
   // `s` is only needed in multiplayer, where the choice is sent as an intent rather
   // than resolved locally. Singleplayer callers pass the key alone, as before.
   smeltMenu(key, s) {
@@ -3392,7 +3405,7 @@ const Game = {
           lvlCol: this.combatColor(lvl),
           cb: () => this.netAction('attack', { n })
         });
-      } else opts.push({ label: 'Talk-to ' + d.name, cb: () => this.netTodo() });
+      } else opts.push({ label: 'Talk-to ' + d.name, cb: () => this.netTalkTo(n) });
       // Ghostly traders stay shut online — they are gated behind quest progress the
       // sim does not model, so opening them would hand out a quest reward for free.
       if (d.trade && !d.ghostly) opts.push({ label: 'Trade ' + d.name, cb: () => { this.mark(n.x !== undefined ? n.x : n.fx, n.z !== undefined ? n.z : n.fz, 'action'); Net.shopOpen(n.id); } });
@@ -3407,6 +3420,29 @@ const Game = {
     return opts;
   },
 
+  // Advance a quest one step. Singleplayer applies the shared step table directly;
+  // multiplayer asks the sim, which re-checks the same table. Either way the rules
+  // live in exactly one place (QUEST_STEPS in data.js) and cannot drift.
+  questAdvance(questId) {
+    if (this.netMode) { Net.questStep(questId); return true; }
+    const stage = this.player.quests[questId] | 0;
+    const step = questStepFor(questId, stage);
+    if (!step) return false;
+    for (const [id, q] of Object.entries(step.needs || {})) if (this.countItem(id) < q) return false;
+    for (const [id, q] of Object.entries(step.needs || {})) this.removeItem(id, q);
+    for (const [id, q] of Object.entries(step.give || {})) this.addItem(id, q);
+    for (const [sk, amt] of Object.entries(step.xp || {})) this.addXp(sk, amt);
+    this.player.quests[questId] = step.to;
+    UI.renderQuests();
+    return true;
+  },
+  // Can this step be handed in right now? Used by dialogue to pick what to say.
+  questReady(questId) {
+    const step = questStepFor(questId, this.player.quests[questId] | 0);
+    if (!step) return false;
+    return Object.entries(step.needs || {}).every(([id, q]) => this.countItem(id) >= q);
+  },
+
   guideDialogue() {
     const q = this.player.quests;
     if (q.lunch === 0) {
@@ -3418,21 +3454,16 @@ const Game = {
         ['Bob', "Say... I'm famished. Bring me 3 cooked shrimp and I'll make it worth your while."],
         ['', "You have started the quest: The Guide's Lunch"]
       ]);
-      q.lunch = 1;
-      UI.renderQuests();
+      this.questAdvance('lunch');
     } else if (q.lunch === 1) {
-      if (this.countItem('shrimp') >= 3) {
-        this.removeItem('shrimp', 3);
-        this.addItem('coins', 100);
-        this.addXp('cooking', 300);
+      if (this.questReady('lunch')) {
+        this.questAdvance('lunch');
         this.dialogue([
           ['You', 'Here you go, three cooked shrimp.'],
           ['Bob', 'Delicious! Here, take these coins.'],
           ['', "You have completed the quest: The Guide's Lunch!"]
         ]);
         Sound.play('coins');
-        q.lunch = 2;
-        UI.renderQuests();
       } else {
         this.dialogue([
           ['Bob', 'Got my 3 cooked shrimp yet? Net some raw shrimp at the river,'],

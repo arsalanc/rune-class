@@ -304,6 +304,9 @@ const Net = {
     // The authority owns the run flag; mirror it onto the client so the HUD button
     // reflects what the sim is actually doing, not what we optimistically set.
     if (typeof m.run === 'boolean') { Game.run = m.run; UI.syncRunButton(); }
+    // Quest progress is per-character and owned by the authority; mirror it so the
+    // client's dialogue asks the right questions and the Quest tab reads true.
+    if (m.quests) { P.quests = Object.assign(Game.emptyQuests(), m.quests); UI.renderQuests(); }
     UI.renderInventory(); UI.renderStats(); UI.renderEquipment();
   },
 
@@ -436,5 +439,8 @@ const Net = {
 
   // Firemaking creates scenery under your feet rather than acting on some, so it is
   // its own intent rather than an action with a target.
-  firemake(id) { this.send({ t: 'firemake', id }); }
+  firemake(id) { this.send({ t: 'firemake', id }); },
+
+  // Only ever a request. The sim re-checks the step's requirements before it moves.
+  questStep(id) { this.send({ t: 'quest', id }); }
 };

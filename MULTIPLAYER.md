@@ -126,9 +126,40 @@ smithing, cooking, firemaking, chat, emotes, ladders, dynamic events, and seeing
 other players.**
 
 Still singleplayer-only, and they say so when you try: crafting, fletching, herblore,
-farming, prayer, magic, and quests/dialogue. The remaining production skills all
-share one input path — *use item on item*, with their own batch menus — so they are a
+farming, prayer, magic, and most quests. The remaining production skills all share
+one input path — *use item on item*, with their own batch menus — so they are a
 single coherent batch rather than six separate ones.
+
+### Quests
+
+**Quest progress is per-player; quest effects on the world are shared.** Once anyone
+rings the peal, the Font gate is open for everyone, permanently — those effects go
+through `setScenery()`, which already broadcasts. But each player has their own quest
+state, saved with their character, and earns their own rewards.
+
+The alternative — one shared quest state — was rejected on purpose: the first player
+to finish a quest would permanently lock everyone else out of its rewards, and a
+friend joining next month could never play the content at all.
+
+**How dialogue crosses the wire: it doesn't.** Dialogue choices are JS closures and
+cannot be serialised, so rewriting fourteen quest trees as server-side state machines
+would have been the bulk of the work. Instead the client renders the dialogue it
+already has — text is harmless — and only ever *asks* to advance a quest.
+`intentQuestStep()` then re-reads the same shared step table and re-checks the
+requirements itself. A modified client can ask all it likes; it cannot hand in shrimp
+it does not have.
+
+That works because quest steps are **data**, in `QUEST_STEPS` (`data.js`): `from`/`to`
+stage, `needs`, `give`, `xp`. Both sides read one table, so the rules cannot drift —
+the same reason `combat.js` and `cookBurnChance()` are shared.
+
+`Game.NET_TALK` whitelists which NPCs will talk in a shared world: pure-flavour ones,
+and quests whose steps live in that table. Everything else still says so, because its
+dialogue mutates player state directly and the authority would never see it.
+
+Ported so far: **The Guide's Lunch**. The rest are blocked less by the framework than
+by their ingredients — The Cook's Feast needs farm produce, The Artisan's Apprentice
+needs a crafted leather coif, and both of those skills are still offline.
 
 ### Production skills
 

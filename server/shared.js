@@ -10,7 +10,7 @@ const dir = path.join(__dirname, '..', 'js');
 const EXPORTS = [
   'XP_FOR_LEVEL', 'levelForXp', 'SKILLS', 'COMBAT_STYLES', 'ITEMS', 'METALS', 'SHAPES',
   'SMITHABLES', 'SMELTS', 'TREE_DEFS', 'COOKABLES', 'cookBurnChance', 'cookStopBurn', 'SPELLS', 'PRAYERS', 'SHOP_DEFS', 'shopCategory', 'SHOP_CAT_NAME', 'RUNE_ALTARS', 'ALTAR_BY_RUNE', 'runeYield', 'HERBS', 'HERB_BY_ID', 'POTIONS', 'UNF_BY_HERB', 'POTION_BY_UNF', 'GRINDABLES',
-  'QUEST_DEFS', 'SCENERY_DEFS', 'NPC_DEFS', 'WALKABLE', 'World', 'mulberry32', 'makeNoise', 'Combat', 'CROPS', 'DROP_TABLES', 'GEM_CUTS', 'JEWELLERY', 'ENCHANTS', 'SAP_NAME', 'EMOTES', 'EMOTE_BY_ID', 'Events', 'EVENT_DEFS', 'EVENT_BY_ID', 'EVENT_TIER_NAME',
+  'QUEST_DEFS', 'QUEST_STEPS', 'questStepFor', 'SCENERY_DEFS', 'NPC_DEFS', 'WALKABLE', 'World', 'mulberry32', 'makeNoise', 'Combat', 'CROPS', 'DROP_TABLES', 'GEM_CUTS', 'JEWELLERY', 'ENCHANTS', 'SAP_NAME', 'EMOTES', 'EMOTE_BY_ID', 'Events', 'EVENT_DEFS', 'EVENT_BY_ID', 'EVENT_TIER_NAME',
   'Sim'
 ];
 

@@ -219,7 +219,8 @@ class Sim {
       x: World.SPAWN.x + 0.5, z: World.SPAWN.z + 0.5, layer: 0,
       xp: { hits: 1154 }, curHits: 10, style: 2,
       inv: [{ id: 'bronze_axe', qty: 1 }, { id: 'bronze_pickaxe', qty: 1 }, { id: 'tinderbox', qty: 1 }, { id: 'net', qty: 1 }],
-      worn: this.emptyWorn(), nextAtkTick: 0, run: false, bank: []
+      worn: this.emptyWorn(), nextAtkTick: 0, run: false, bank: [],
+      quests: {}, firesLit: 0, ratKills: 0
     };
   }
 
@@ -231,6 +232,10 @@ class Sim {
     p.xp = d.xp || p.xp; p.curHits = d.curHits || 10; p.inv = d.inv || p.inv;
     p.x = d.x || p.x; p.z = d.z || p.z; p.layer = d.layer || 0; p.style = d.style == null ? 2 : d.style;
     p.run = !!d.run;
+    // Quest progress is per-character, so it rides in the save alongside xp and gear.
+    p.quests = (d.quests && typeof d.quests === 'object') ? Object.assign({}, d.quests) : {};
+    p.firesLit = d.firesLit | 0;
+    p.ratKills = d.ratKills | 0;
     // Sanitise on load: a save is written by the host's own storage, but a corrupt or
     // hand-edited one should not be able to conjure items that do not exist.
     p.bank = Array.isArray(d.bank)
@@ -246,7 +251,8 @@ class Sim {
   }
 
   toSave(p) {
-    return { xp: p.xp, curHits: p.curHits, inv: p.inv, worn: p.worn, x: p.x, z: p.z, layer: p.layer, style: p.style, run: !!p.run, bank: p.bank || [] };
+    return { xp: p.xp, curHits: p.curHits, inv: p.inv, worn: p.worn, x: p.x, z: p.z, layer: p.layer, style: p.style, run: !!p.run, bank: p.bank || [],
+             quests: p.quests || {}, firesLit: p.firesLit | 0, ratKills: p.ratKills | 0 };
   }
 
   level(p, sk) { return levelForXp(p.xp[sk] || 0); }
@@ -268,7 +274,7 @@ class Sim {
     this.pushStats(p);
   }
 
-  pushStats(p) { this.emit({ kind: 'to', id: p.id, msg: { t: 'you', xp: p.xp, curHits: p.curHits, maxHits: this.maxHits(p), inv: p.inv, worn: p.worn, style: p.style, run: !!p.run } }); }
+  pushStats(p) { this.emit({ kind: 'to', id: p.id, msg: { t: 'you', xp: p.xp, curHits: p.curHits, maxHits: this.maxHits(p), inv: p.inv, worn: p.worn, style: p.style, run: !!p.run, quests: p.quests || {} } }); }
   toPlayer(p, text, cls) { this.emit({ kind: 'to', id: p.id, msg: { t: 'msg', text, cls: cls || 'm-game' } }); }
 
   // ---------- inventory ----------
@@ -502,6 +508,32 @@ class Sim {
     if (st) st.qty += qty; else shop.push({ id, qty, initial: 0 });
     this.pushStats(p);
     this.pushShopToViewers(p.shopId, p.id);
+  }
+
+  // ---------- quests ----------
+  // The client renders the dialogue — it has all the text, and text is harmless. But
+  // it only ever *asks* to advance a quest, and this re-reads the shared step table
+  // and re-checks the requirements itself. A modified client can ask all it likes; it
+  // cannot hand in shrimp it does not have.
+  intentQuestStep(p, questId) {
+    if (!p.quests) p.quests = {};
+    const stage = p.quests[questId] | 0;
+    const step = questStepFor(questId, stage);
+    if (!step) return;                                   // unknown quest, or already past this
+    for (const [id, q] of Object.entries(step.needs || {}))
+      if (this.count(p, id) < q) { this.toPlayer(p, "You don't have what is needed yet.", 'm-red'); return; }
+
+    for (const [id, q] of Object.entries(step.needs || {})) this.remove(p, id, q);
+    for (const [id, q] of Object.entries(step.give || {})) this.add(p, id, q);
+    for (const [sk, amt] of Object.entries(step.xp || {})) this.addXp(p, sk, amt);
+    p.quests[questId] = step.to;
+
+    const def = QUEST_STEPS[questId];
+    if (def && step.to === def.steps[def.steps.length - 1].to)
+      this.toPlayer(p, 'You have completed the quest: ' + def.name + '!', 'm-quest');
+    else if (stage === 0 && def)
+      this.toPlayer(p, 'You have started the quest: ' + def.name, 'm-quest');
+    this.pushStats(p);
   }
 
   // ---------- intents from clients ----------

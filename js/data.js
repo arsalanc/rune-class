@@ -476,6 +476,41 @@ const COOKABLES = {
   raw_salmon:    { cooked: 'salmon', burnt: 'burnt_fish', lvl: 25, xp: 90, burnBase: 0.6, stopBurn: 52 }
 };
 
+// ---------------------------------------------------------------------------
+// Quest steps, as data rather than closures.
+//
+// Quest *progress* is per-player and travels with the character; quest effects on
+// the *world* (an opened gate, an emptied plinth) are shared, because those go
+// through setScenery() which already broadcasts. So a friend who joins next month
+// still gets to play every quest — they just walk into a world where some doors are
+// already open.
+//
+// Expressing the steps as data is what lets the client keep rendering the dialogue
+// it always has while the sim independently re-checks the requirements. A modified
+// client can ask to advance a quest; it cannot skip what the step demands, because
+// the sim reads the same table and verifies `needs` itself.
+//
+//   from/to  the stage this step moves the player between
+//   needs    items that must be held, and are consumed
+//   give     items granted
+//   xp       experience granted, by skill
+const QUEST_STEPS = {
+  lunch: {
+    name: "The Guide's Lunch",
+    steps: [
+      { from: 0, to: 1 },
+      { from: 1, to: 2, needs: { shrimp: 3 }, give: { coins: 100 }, xp: { cooking: 300 } }
+    ]
+  }
+};
+
+// The single place both sides look up "what would advancing this quest require?".
+function questStepFor(questId, stage) {
+  const q = QUEST_STEPS[questId];
+  if (!q) return null;
+  return q.steps.find(s => s.from === (stage | 0)) || null;
+}
+
 // Pure burn maths, shared by singleplayer (Game.burnChance) and the authoritative
 // sim, for the same reason combat.js exists: if the two ever computed burn odds
 // differently, the same fish would burn at different rates online and off.
