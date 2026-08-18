@@ -207,6 +207,64 @@ check('the meaningless prayer bar is hidden', await guest.evaluate(`(() => {
   return document.getElementById('hud-pray-fill').closest('.hud-row').classList.contains('hidden');
 })()`));
 
+// ---------- banking, driven through the real UI ----------
+// The point here is that the singleplayer bank window works unchanged online: these
+// click the same buttons a player would, not the Net intents underneath.
+const boothKey = await host.evaluate(`(() => {
+  for (const [key, s] of World.L[0].scenery) if (s.type === 'bank_booth') {
+    // stand the guest's character at the booth so the sim's range check passes
+    const p = [...Host.clients.values()].filter(c => !c.local).map(c => Host.sim.players.get(c.pid))[0];
+    p.x = s.x + 0.5; p.z = s.z + 0.5; p.layer = 0; p.path = [];
+    p.inv = [{ id: 'coins', qty: 250 }, { id: 'logs', qty: 8 }];
+    // Writing p.inv straight into the sim does not tell the guest — without this the
+    // guest's mirror stays stale and a click by slot index lands on the wrong item.
+    Host.sim.pushStats(p);
+    return key;
+  }
+  return '';
+})()`);
+check('found a bank booth', !!boothKey);
+await sleep(1200);   // let the pushed inventory reach the guest before clicking by slot
+check('the guest sees the seeded inventory', await guest.evaluate(`Game.player.inv.some(x => x && x.id === 'logs' && x.qty === 8)`));
+
+await guest.evaluate(`Net.action({ kind: 'bank', key: ${JSON.stringify(boothKey)} })`);
+await sleep(1500);
+check('the bank window opened on the guest', await guest.evaluate(`UI.modal === 'bank'`));
+check("it is showing the authority's bank, not a local one", await guest.evaluate(`Array.isArray(Game.player.bank)`));
+
+// Click the inventory slot holding the logs — with the bank open that deposits.
+// Qty defaults to 1, so set the "All" button first, as a player would.
+await guest.evaluate(`(() => { Game.bankQty = 'all'; const i = Game.player.inv.findIndex(x => x && x.id === 'logs'); Game.invClick(i); })()`);
+await sleep(1200);
+check('clicking an inventory item at the booth deposits it',
+  await host.evaluate(`[...Host.clients.values()].filter(c => !c.local).some(c => (Host.sim.players.get(c.pid).bank.find(b => b.id === 'logs') || {}).qty === 8)`));
+check('the guest sees the deposit reflected back',
+  await guest.evaluate(`(Game.player.bank.find(b => b.id === 'logs') || {}).qty === 8`));
+
+// Withdraw through Game.withdraw, the same call the bank grid makes on click.
+await guest.evaluate(`Game.withdraw('logs', 3)`);
+await sleep(1200);
+// Logs don't stack, so three of them occupy three slots — count, don't look for a stack.
+check('withdrawing returns items to the pack', await guest.evaluate(
+  `Game.player.inv.reduce((n, x) => n + (x && x.id === 'logs' && !x.noted ? x.qty : 0), 0) === 3`));
+check('and takes them out of the bank',
+  await guest.evaluate(`(Game.player.bank.find(b => b.id === 'logs') || {}).qty === 5`));
+
+// The bank is the authority's, so the guest cannot simply write to its mirror.
+const tampered = await guest.evaluate(`(async () => {
+  Game.player.bank.push({ id: 'rune_sword', qty: 99, tab: 1 });
+  Game.withdraw('rune_sword', 99);
+  await new Promise(r => setTimeout(r, 800));
+  return Game.player.inv.some(x => x && x.id === 'rune_sword');
+})()`);
+check('inventing items in the local bank mirror gets you nothing', tampered === false);
+
+check('walking away closes the bank', await guest.evaluate(`(async () => {
+  Net.walk(64, 64);
+  await new Promise(r => setTimeout(r, 1200));
+  return UI.modal !== 'bank';
+})()`));
+
 const errs = [...host.errors, ...guest.errors];
 check('no uncaught exceptions in either tab', errs.length === 0, errs.join(' | '));
 

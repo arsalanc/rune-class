@@ -972,7 +972,7 @@ const UI = {
       b.textContent = label; if (title) b.title = title;
       b.addEventListener('click', () => { Game.bankActiveTab = val; this.renderBank(); });
       // drop a dragged bank item onto a numbered tab to file it there
-      if (typeof val === 'number') b.addEventListener('mouseup', () => { if (this._bankDrag != null) { const it = Game.player.bank.find(x => x.id === this._bankDrag); if (it) { it.tab = val; } this._bankDrag = null; this.renderBank(); } });
+      if (typeof val === 'number') b.addEventListener('mouseup', () => { if (this._bankDrag != null) { Game.bankFile(this._bankDrag, val); this._bankDrag = null; this.renderBank(); } });
       bar.appendChild(b);
     };
     mk('All', 'all', 'Show every item');
@@ -1027,7 +1027,7 @@ const UI = {
           { label: 'Withdraw X', cb: () => { const n = parseInt(prompt('Withdraw how many?', Game.bankXVal), 10); if (n > 0) { Game.bankXVal = n; Game.withdraw(it.id, n); } } },
           { label: 'Withdraw All', cb: () => Game.withdraw(it.id, it.qty) },
           { label: (Game.bankNote ? '✓ ' : '') + 'Withdraw-as-note', cb: () => { Game.bankNote = !Game.bankNote; this.renderBankFoot(); } },
-          ...Array.from({ length: this.BANK_TABS }, (_, k) => ({ label: 'File in tab ' + (k + 1), cb: () => { it.tab = k + 1; this.renderBank(); } })),
+          ...Array.from({ length: this.BANK_TABS }, (_, k) => ({ label: 'File in tab ' + (k + 1), cb: () => { Game.bankFile(it.id, k + 1); this.renderBank(); } })),
           { label: 'Cancel', cb: () => {} }
         ]);
       });
@@ -1076,6 +1076,9 @@ const UI = {
   },
 
   closeModal() {
+    // Tell the authority the box is shut, so it stops accepting bank operations from
+    // us. Harmless if it already knows — closeBank() is idempotent.
+    if (this.modal === 'bank' && Game.netMode) Net.bankClose();
     this.modal = null;
     this.els.modal.classList.add('hidden');
     this.els.mfoot.innerHTML = '';

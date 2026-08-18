@@ -1171,6 +1171,7 @@ const Game = {
   },
 
   depositAll() {
+    if (this.netMode) { Net.bankDepositAll(); return; }   // one intent, not 30
     const P = this.player;
     for (let i = 0; i < P.inv.length; i++) { const it = P.inv[i]; if (!it) continue; it.noted ? this.depositSlot(i, it.qty) : this.deposit(it.id, it.qty); }
     UI.renderBank();
@@ -1223,6 +1224,7 @@ const Game = {
   depositSlot(i, qty) {
     const P = this.player, it = P.inv[i];
     if (!it) return;
+    if (this.netMode) { Net.bankDepositSlot(i, qty); return; }
     qty = Math.min(qty, it.qty || 1);
     if (qty <= 0) return;
     if ((it.qty || 1) > qty) it.qty -= qty; else { P.inv[i] = null; if (this.selectedSlot === i) this.selectedSlot = -1; }
@@ -1307,16 +1309,19 @@ const Game = {
   invClick(i) {
     const P = this.player, it = P.inv[i];
     if (!it) return;
-    if (this.netMode) {
-      const def = ITEMS[it.id];
-      if (def.slot) Net.wield(i);
-      else if (def.heal) Net.eat(i);
-      else this.msg(def.name + ' — right-click to drop. Banking, crafting and questing are singleplayer-only for now.', 'm-game');
-      return;
-    }
+    // With the bank open, a click deposits — in both modes. This has to come before
+    // the netMode branch below, or clicking an item at the booth would wield it.
     if (UI.modal === 'bank') {
       if (it.noted) this.depositSlot(i, this.bankResolveQty(it.qty));
       else this.deposit(it.id, this.bankResolveQty(this.countItem(it.id)));
+      return;
+    }
+    if (this.netMode) {
+      const def = ITEMS[it.id];
+      if (it.noted) this.msg('This is a bank note. Take it to a bank to reclaim the item.', 'm-game');
+      else if (def.slot) Net.wield(i);
+      else if (def.heal) Net.eat(i);
+      else this.msg(def.name + ' — right-click to drop. Crafting and questing are singleplayer-only for now.', 'm-game');
       return;
     }
     if (UI.modal === 'shop') { if (it.noted) { this.msg('Un-note that at a bank before selling it.', 'm-game'); return; } this.sell(it.id, 1); return; }
@@ -1349,7 +1354,15 @@ const Game = {
     const it = this.player.inv[i];
     if (!it) return [];
     const def = ITEMS[it.id], opts = [];
-    if (this.netMode) {
+    // The bank branch comes first in both modes: deposit()/depositSlot() know how to
+    // route themselves, so these options are identical online and off.
+    if (UI.modal !== 'bank' && this.netMode) {
+      if (it.noted) {
+        opts.push({ label: 'Drop ' + def.name + ' note', cb: () => Net.drop(i) });
+        opts.push({ label: 'Examine ' + def.name, cb: () => this.msg('A bank note worth ' + it.qty + ' × ' + def.name.toLowerCase() + '. Reclaim it at a bank.', 'm-game') });
+        opts.push({ label: 'Cancel', cb: () => {} });
+        return opts;
+      }
       if (def.slot) opts.push({ label: (def.slot === 'weapon' ? 'Wield ' : 'Wear ') + def.name, cb: () => Net.wield(i) });
       if (def.heal) opts.push({ label: 'Eat ' + def.name, cb: () => Net.eat(i) });
       opts.push({ label: 'Drop ' + def.name, cb: () => Net.drop(i) });
@@ -2337,7 +2350,11 @@ const Game = {
   },
 
   // ---------- bank & shop ----------
+  // In multiplayer the bank lives on the authority: these become requests, and the
+  // 'bank' message it sends back is what redraws the window. `player.bank` is a
+  // read-only mirror there, so nothing below may write to it.
   deposit(id, qty) {
+    if (this.netMode) { Net.bankDeposit(id, qty, this.bankDepositTab()); return; }
     const have = this.countItem(id);
     qty = Math.min(qty, have);
     if (qty <= 0) return;
@@ -2349,6 +2366,7 @@ const Game = {
   },
 
   withdraw(id, qty) {
+    if (this.netMode) { Net.bankWithdraw(id, qty, this.bankNote); return; }
     const b = this.player.bank.find(i => i.id === id);
     if (!b) return;
     qty = Math.min(qty, b.qty);
@@ -2360,6 +2378,14 @@ const Game = {
     b.qty -= moved;
     if (b.qty <= 0) this.player.bank.splice(this.player.bank.indexOf(b), 1);
     UI.renderBank();
+  },
+
+  // Filing a stack into a numbered tab. Split out so the UI never pokes at the
+  // bank array itself — it can't, in multiplayer.
+  bankFile(id, tab) {
+    if (this.netMode) { Net.bankTab(id, tab); return; }
+    const b = this.player.bank.find(x => x.id === id);
+    if (b) { b.tab = tab; UI.renderBank(); }
   },
 
   // Marrow of Mourncross trades in ecto-tokens, not coin, so price and currency both
@@ -3328,7 +3354,8 @@ const Game = {
       if (s.type === 'lure_spot') opts.push({ label: 'Lure Fishing spot', cb: () => this.netAction('fish', { s }) });
       if (s.type === 'ladder_down') opts.push({ label: 'Climb-down Ladder', cb: () => this.netAction('climb', { s }) });
       if (s.type === 'ladder_up') opts.push({ label: 'Climb-up Ladder', cb: () => this.netAction('climb', { s }) });
-      if (['bank_booth', 'furnace', 'anvil', 'range', 'altar'].includes(s.type))
+      if (s.type === 'bank_booth') opts.push({ label: 'Use ' + def.name, cb: () => this.netAction('bank', { s }) });
+      else if (['furnace', 'anvil', 'range', 'altar'].includes(s.type))
         opts.push({ label: 'Use ' + def.name, cb: () => this.netTodo() });
       opts.push({ label: 'Examine ' + def.name, cb: () => this.msg(def.examine, 'm-game') });
     } else if (ref.kind === 'npc') {

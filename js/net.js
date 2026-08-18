@@ -233,6 +233,7 @@ const Net = {
       }
       case 'chat': return this.onChat(m);
       case 'emote': return this.onEmote(m);
+      case 'bank': return this.onBank(m);
       case 'scenery': return this.applyScenery(m);
       case 'layer': {
         Game.player.layer = m.layer; Game.player.x = m.x; Game.player.z = m.z;
@@ -264,6 +265,9 @@ const Net = {
     // Prayer is singleplayer-only, so anything left burning from a solo session
     // would quietly drain points here for no benefit. Start clean.
     P.prayersOn = {};
+    // Your solo bank must not show through as this character's. The authority sends
+    // the real contents when you open a booth.
+    P.bank = [];
     Game.run = !!m.you.run; UI.syncRunButton();
     for (const o of m.overrides || []) this.applyScenery(o);
     Game.players = []; Game.npcs = []; Game.ground = [];
@@ -300,6 +304,16 @@ const Net = {
     // reflects what the sim is actually doing, not what we optimistically set.
     if (typeof m.run === 'boolean') { Game.run = m.run; UI.syncRunButton(); }
     UI.renderInventory(); UI.renderStats(); UI.renderEquipment();
+  },
+
+  // The bank lives on the authority. We mirror its contents onto the local player so
+  // the existing bank UI — which reads Game.player.bank directly — works unchanged,
+  // but this copy is display-only: every mutation goes back out as an intent.
+  onBank(m) {
+    if (m.items) Game.player.bank = m.items;
+    if (m.open === false) { if (UI.modal === 'bank') UI.closeModal(); return; }
+    if (UI.modal === 'bank') UI.renderBank();
+    else UI.openBank();
   },
 
   onChat(m) {
@@ -361,7 +375,7 @@ const Net = {
       return n;
     });
 
-    Game.ground = m.ground.map(g => ({ gid: g.gid, id: g.id, qty: g.qty, x: g.x, z: g.z, layer: P.layer }));
+    Game.ground = m.ground.map(g => ({ gid: g.gid, id: g.id, qty: g.qty, noted: g.noted, x: g.x, z: g.z, layer: P.layer }));
     // the server owns events in multiplayer; we only render what it reports
     Game.eventHud = m.events || [];
     UI.renderEventBanner();
@@ -388,5 +402,15 @@ const Net = {
   wield(i) { this.send({ t: 'wield', i }); },
   unequip(slot) { this.send({ t: 'unequip', slot }); },
   style(s) { this.send({ t: 'style', style: s }); },
-  run(on) { this.send({ t: 'run', on: !!on }); }
+  run(on) { this.send({ t: 'run', on: !!on }); },
+
+  // ---------- bank ----------
+  // The authority owns the contents; these are requests, and the resulting 'bank'
+  // message is what actually updates what you see.
+  bankDeposit(id, qty, tab) { this.send({ t: 'bankdep', id, qty, tab }); },
+  bankDepositSlot(i, qty) { this.send({ t: 'bankdepslot', i, qty }); },
+  bankDepositAll() { this.send({ t: 'bankdepall' }); },
+  bankWithdraw(id, qty, note) { this.send({ t: 'bankwd', id, qty, note: !!note }); },
+  bankTab(id, tab) { this.send({ t: 'banktab', id, tab }); },
+  bankClose() { this.send({ t: 'bankclose' }); }
 };

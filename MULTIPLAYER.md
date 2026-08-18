@@ -121,12 +121,33 @@ so a CDN outage or compromise cannot take down the crypto or quietly replace it.
 Shared and authoritative: **movement (walk and run), woodcutting, mining, fishing,
 combat (melee + ranged, per-weapon and per-NPC attack speeds, the combat triangle,
 worn equipment across all six slots, arrow recovery, melee adjacency), monster AI and
-aggro, loot, death, chat, emotes, ladders, dynamic events, and seeing other players.**
+aggro, loot, death, banking (including tabs and bank notes), chat, emotes, ladders,
+dynamic events, and seeing other players.**
 
-Still singleplayer-only, and they say so when you try: banking, shops,
-smithing/smelting, cooking, firemaking, crafting, fletching, farming, prayer, magic,
-and quests/dialogue. The skilling and combat maths already live in shared modules, so
+Still singleplayer-only, and they say so when you try: shops, smithing/smelting,
+cooking, firemaking, crafting, fletching, farming, prayer, magic, and
+quests/dialogue. The skilling and combat maths already live in shared modules, so
 bringing these online is mostly writing the intents and the handlers.
+
+### The bank
+
+Per-character storage the sim owns outright, saved with the character. The client
+keeps a **display-only mirror** at `Game.player.bank` so the existing bank window
+works unchanged; every mutation goes out as an intent and comes back as a `bank`
+message. Writing to the mirror achieves nothing — the test suite asserts exactly that
+by pushing a fake rune sword into it and trying to withdraw.
+
+Two things the sim has to police, because the client is not trusted:
+
+- **Range.** `atBank()` re-checks on *every* operation that the player is still
+  standing beside the booth they opened, rather than trusting a flag set once. Walking
+  away, climbing a ladder, starting another action or dying all close the window.
+- **Bank notes can't become real items.** A note is `{ noted: true }` — a stackable
+  receipt. Every "do I really have this?" query (`count`, `has`, `remove`,
+  `bestArrow`) skips notes, and the flag is preserved through **drop → ground → pick
+  up** and through the death drop. Miss any one of those and a note for 1000 logs
+  becomes 1000 logs: `doTake` would mint them, or `bestArrow` would fire arrows
+  straight out of the receipt.
 
 Two rules of thumb from doing this:
 

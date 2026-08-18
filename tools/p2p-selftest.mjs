@@ -107,9 +107,11 @@ function makeRealm(tag) {
     var Sound = { ensure() {}, play() {} };
     var Game = { player: {}, players: [], npcs: [], ground: [], netMode: false, eventHud: [], run: false };
     var UI = {
+      modal: null,
       addMessage(t, c) { __messages.push({ t, c }); },
       refresh() {}, renderInventory() {}, renderStats() {}, renderEquipment() {},
-      renderEventBanner() {}, syncRunButton() {}
+      renderEventBanner() {}, syncRunButton() {},
+      openBank() { this.modal = 'bank'; }, renderBank() {}, closeModal() { this.modal = null; }
     };
   `, ctx, { filename: 'stubs.js' });
 
@@ -192,6 +194,83 @@ const walkDist = await (async () => {
 check('running covers more ground than walking', runDist > walkDist * 1.4,
   'run ' + runDist.toFixed(2) + ' vs walk ' + walkDist.toFixed(2));
 
+// --- banking ---
+// The sim owns the bank, so these all assert against the host's copy, not the
+// guest's mirror. Put the player at a booth first; walking there would take ages.
+const booth = (() => {
+  for (const [key, s] of host.World.L[0].scenery) if (s.type === 'bank_booth') return { key, s };
+  return null;
+})();
+check('the world has a bank booth to test against', !!booth);
+
+const P = () => host.Host.sim.players.get(hostSidePlayer.pid);
+const sim = () => host.Host.sim;
+const standAtBooth = () => { const p = P(); p.x = booth.s.x + 0.5; p.z = booth.s.z + 0.5; p.layer = 0; p.path = []; };
+
+standAtBooth();
+guest.Net.action({ kind: 'bank', key: booth.key });
+await sleep(600);
+check('using a booth opens the bank', P().bankKey === booth.key);
+check('the guest received the bank contents', Array.isArray(guest.Game.player.bank));
+
+P().inv = [{ id: 'coins', qty: 500 }, { id: 'bronze_axe', qty: 1 }, { id: 'logs', qty: 12 }];
+guest.Net.bankDeposit('logs', 12, 1);
+await sleep(400);
+check('deposit moves items out of the pack', sim().count(P(), 'logs') === 0);
+check('deposit puts them in the bank', (P().bank.find(b => b.id === 'logs') || {}).qty === 12);
+
+guest.Net.bankWithdraw('logs', 5, false);
+await sleep(400);
+check('withdraw returns items to the pack', sim().count(P(), 'logs') === 5);
+check('withdraw decrements the bank', (P().bank.find(b => b.id === 'logs') || {}).qty === 7);
+
+guest.Net.bankDepositAll();
+await sleep(400);
+check('deposit-all empties the pack', P().inv.length === 0);
+check('deposit-all banks everything', P().bank.length === 3);
+
+// --- notes ---
+guest.Net.bankWithdraw('logs', 12, true);
+await sleep(400);
+const note = P().inv.find(i => i.noted);
+check('withdraw-as-note yields a single noted stack', !!note && note.qty === 12 && note.id === 'logs');
+check('a note is not counted as the real item', sim().count(P(), 'logs') === 0);
+check('a note does not satisfy has()', sim().has(P(), 'logs') === false);
+
+// The dupe that matters: drop a note, pick it up, and check it is still a note.
+const noteIdx = P().inv.indexOf(note);
+guest.Net.drop(noteIdx);
+await sleep(400);
+const dropped = sim().ground.find(g => g.id === 'logs' && g.noted);
+check('a dropped note stays a note on the ground', !!dropped && dropped.qty === 12);
+
+guest.Net.action({ kind: 'take', gid: dropped.gid });
+await sleep(900);
+check('picking a note back up does not mint real items', sim().count(P(), 'logs') === 0,
+  'count=' + sim().count(P(), 'logs'));
+check('it comes back as a note', (P().inv.find(i => i.noted) || {}).qty === 12);
+
+// Banking a note by slot reclaims it as real stock.
+standAtBooth();
+guest.Net.action({ kind: 'bank', key: booth.key });
+await sleep(600);
+guest.Net.bankDepositSlot(P().inv.findIndex(i => i.noted), 12);
+await sleep(400);
+check('depositing a note returns the real items to the bank',
+  (P().bank.find(b => b.id === 'logs') || {}).qty === 12);
+check('the note is gone from the pack', !P().inv.some(i => i.noted));
+
+// --- the authority refuses banking from out of range ---
+guest.Net.action({ kind: 'bank', key: booth.key });
+await sleep(600);
+const bankedBefore = (P().bank.find(b => b.id === 'logs') || {}).qty;
+P().x = booth.s.x + 20; P().z = booth.s.z + 20;      // teleport away without walking
+guest.Net.bankWithdraw('logs', 12, false);
+await sleep(400);
+check('a bank operation from out of range is refused',
+  (P().bank.find(b => b.id === 'logs') || {}).qty === bankedBefore);
+check('and the window is closed', P().bankKey === null);
+
 // --- the character save survives a disconnect ---
 guest.Net.transport.close();
 await sleep(300);
@@ -211,6 +290,12 @@ check('their saved progress came back',
   Math.abs(returning.Game.player.x - saved.save.x) < 0.001,
   'expected ' + saved.save.x + ', got ' + returning.Game.player.x);
 check('the run setting persisted across the disconnect', saved.save.run === false && returning.Game.run === false);
+check('the bank persisted across the disconnect',
+  Array.isArray(saved.save.bank) && (saved.save.bank.find(b => b.id === 'logs') || {}).qty === 12,
+  JSON.stringify(saved.save.bank));
+const reloaded = [...host.Host.clients.values()].find(c => !c.local);
+check('the reloaded character still has its bank',
+  (host.Host.sim.players.get(reloaded.pid).bank.find(b => b.id === 'logs') || {}).qty === 12);
 
 // --- the same character cannot be logged in twice ---
 const twin = makeRealm('twin');

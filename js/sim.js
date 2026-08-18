@@ -213,7 +213,7 @@ class Sim {
       x: World.SPAWN.x + 0.5, z: World.SPAWN.z + 0.5, layer: 0,
       xp: { hits: 1154 }, curHits: 10, style: 2,
       inv: [{ id: 'bronze_axe', qty: 1 }, { id: 'bronze_pickaxe', qty: 1 }, { id: 'tinderbox', qty: 1 }, { id: 'net', qty: 1 }],
-      worn: this.emptyWorn(), nextAtkTick: 0, run: false
+      worn: this.emptyWorn(), nextAtkTick: 0, run: false, bank: []
     };
   }
 
@@ -225,6 +225,13 @@ class Sim {
     p.xp = d.xp || p.xp; p.curHits = d.curHits || 10; p.inv = d.inv || p.inv;
     p.x = d.x || p.x; p.z = d.z || p.z; p.layer = d.layer || 0; p.style = d.style == null ? 2 : d.style;
     p.run = !!d.run;
+    // Sanitise on load: a save is written by the host's own storage, but a corrupt or
+    // hand-edited one should not be able to conjure items that do not exist.
+    p.bank = Array.isArray(d.bank)
+      ? d.bank.filter(b => b && ITEMS[b.id] && b.qty > 0)
+              .map(b => ({ id: b.id, qty: Math.min(b.qty | 0, this.MAX_STACK), tab: (b.tab | 0) || 1 }))
+              .slice(0, this.MAX_BANK)
+      : [];
     // Object.assign fills in slots a save predates (cape/legs arrived with Southmarch)
     p.worn = Object.assign(this.emptyWorn(), d.worn || null);
     if (!d.worn) for (let i = 0; i < p.inv.length; i++) { const it = p.inv[i]; if (it && it.eq) { delete it.eq; const sl = ITEMS[it.id] && ITEMS[it.id].slot; if (sl) { p.worn[sl] = it; p.inv[i] = null; } } }
@@ -233,7 +240,7 @@ class Sim {
   }
 
   toSave(p) {
-    return { xp: p.xp, curHits: p.curHits, inv: p.inv, worn: p.worn, x: p.x, z: p.z, layer: p.layer, style: p.style, run: !!p.run };
+    return { xp: p.xp, curHits: p.curHits, inv: p.inv, worn: p.worn, x: p.x, z: p.z, layer: p.layer, style: p.style, run: !!p.run, bank: p.bank || [] };
   }
 
   level(p, sk) { return levelForXp(p.xp[sk] || 0); }
@@ -259,12 +266,16 @@ class Sim {
   toPlayer(p, text, cls) { this.emit({ kind: 'to', id: p.id, msg: { t: 'msg', text, cls: cls || 'm-game' } }); }
 
   // ---------- inventory ----------
-  count(p, id) { return p.inv.reduce((n, i) => n + (i.id === id ? i.qty : 0), 0); }
-  has(p, id) { return p.inv.some(i => i.id === id); }
+  // Bank notes (`noted: true`) are inert placeholders: a stackable receipt for items
+  // sitting in the bank, worth nothing until reclaimed. Every "do I really have this?"
+  // query below skips them, exactly as singleplayer does — otherwise a note for 1000
+  // logs would read as 1000 logs you could smelt, fletch or hand to a quest NPC.
+  count(p, id) { return p.inv.reduce((n, i) => n + (i.id === id && !i.noted ? i.qty : 0), 0); }
+  has(p, id) { return p.inv.some(i => i.id === id && !i.noted); }
   add(p, id, qty = 1) {
     const def = ITEMS[id];
     if (def.stack) {
-      const it = p.inv.find(i => i.id === id);
+      const it = p.inv.find(i => i.id === id && !i.noted);
       if (it) { it.qty += qty; return true; }
       if (p.inv.length >= 30) return false;
       p.inv.push({ id, qty });
@@ -276,14 +287,126 @@ class Sim {
     }
     return true;
   }
+  // A note stack ignores the item's own stackability — that is the whole point of it.
+  addNote(p, id, qty = 1) {
+    const it = p.inv.find(i => i.id === id && i.noted);
+    if (it) { it.qty += qty; return true; }
+    if (p.inv.length >= 30) return false;
+    p.inv.push({ id, qty, noted: true });
+    return true;
+  }
   remove(p, id, qty = 1) {
     let left = qty;
     for (let i = p.inv.length - 1; i >= 0 && left > 0; i--) {
       const it = p.inv[i];
-      if (it.id !== id) continue;
+      if (it.id !== id || it.noted) continue;      // never consume from a note
       if (it.qty > left) { it.qty -= left; left = 0; }
       else { left -= it.qty; p.inv.splice(i, 1); }
     }
+  }
+
+  // ---------- bank ----------
+  // The bank is per-player storage the sim owns outright. The client mirrors it for
+  // rendering but never mutates it: every change below goes through an intent that
+  // re-checks the player is actually standing at a booth, so a modified client cannot
+  // bank from the middle of a dungeon or withdraw what it does not have.
+  MAX_BANK = 400;        // distinct stacks; the host is someone's browser, so cap it
+  MAX_STACK = 2000000000;
+
+  // Returns the booth they have open, or null — revalidated on every operation
+  // rather than trusted from when the bank was opened.
+  atBank(p) {
+    if (p.bankKey === undefined || p.bankKey === null) return null;
+    const s = World.L[p.layer] && World.L[p.layer].scenery.get(p.bankKey);
+    if (!s || s.type !== 'bank_booth') return null;
+    if (Math.max(Math.abs(Math.floor(p.x) - s.x), Math.abs(Math.floor(p.z) - s.z)) > 1) return null;
+    return s;
+  }
+  closeBank(p, tell) {
+    if (p.bankKey === undefined || p.bankKey === null) return;
+    p.bankKey = null;
+    this.emit({ kind: 'to', id: p.id, msg: { t: 'bank', open: false } });
+    if (tell) this.toPlayer(p, 'You step away from the bank booth.', 'm-game');
+  }
+  pushBank(p, open) {
+    this.emit({ kind: 'to', id: p.id, msg: { t: 'bank', open: open !== false, items: p.bank } });
+  }
+  // Guard shared by every bank intent: silently drops the request and closes the
+  // window if the player is no longer at a booth.
+  bankOp(p) {
+    if (!p.bank) p.bank = [];
+    if (!this.atBank(p)) { this.closeBank(p); return false; }
+    return true;
+  }
+  bankAdd(p, id, qty, tab) {
+    const b = p.bank.find(x => x.id === id);
+    if (b) { b.qty += qty; return true; }
+    if (p.bank.length >= this.MAX_BANK) { this.toPlayer(p, 'Your bank is full.', 'm-red'); return false; }
+    p.bank.push({ id, qty, tab: tab || 1 });
+    return true;
+  }
+
+  // Deposit `qty` of an item by id, drawn from real (un-noted) stacks only.
+  intentBankDeposit(p, id, qty, tab) {
+    if (!this.bankOp(p)) return;
+    if (!ITEMS[id]) return;
+    qty = Math.min(qty | 0, this.count(p, id));
+    if (qty <= 0) return;
+    if (!this.bankAdd(p, id, qty, tab)) return;
+    this.remove(p, id, qty);
+    this.pushStats(p); this.pushBank(p);
+  }
+
+  // Deposit from ONE slot. This is the path a note takes — count()/remove() ignore
+  // notes by design, so a note can only be banked by slot index.
+  intentBankDepositSlot(p, index, qty) {
+    if (!this.bankOp(p)) return;
+    const it = p.inv[index | 0];
+    if (!it) return;
+    qty = Math.min(qty | 0, it.qty || 1);
+    if (qty <= 0) return;
+    if (!this.bankAdd(p, it.id, qty, undefined)) return;
+    if ((it.qty || 1) > qty) it.qty -= qty; else p.inv.splice(index | 0, 1);
+    this.pushStats(p); this.pushBank(p);
+  }
+
+  intentBankDepositAll(p) {
+    if (!this.bankOp(p)) return;
+    let moved = 0;
+    // Walk backwards: entries are spliced out as they go.
+    for (let i = p.inv.length - 1; i >= 0; i--) {
+      const it = p.inv[i];
+      if (!it) continue;
+      if (!this.bankAdd(p, it.id, it.qty || 1, undefined)) break;   // bank full
+      p.inv.splice(i, 1); moved++;
+    }
+    if (moved) { this.pushStats(p); this.pushBank(p); }
+  }
+
+  intentBankWithdraw(p, id, qty, asNote) {
+    if (!this.bankOp(p)) return;
+    const b = p.bank.find(x => x.id === id);
+    if (!b) return;
+    qty = Math.min(qty | 0, b.qty);
+    if (qty <= 0) return;
+    const def = ITEMS[id];
+    let moved = 0;
+    if (asNote) { if (this.addNote(p, id, qty)) moved = qty; }
+    else if (def.stack) { if (this.add(p, id, qty)) moved = qty; }
+    else for (let i = 0; i < qty; i++) { if (!this.add(p, id, 1)) break; moved++; }
+    if (!moved) { this.toPlayer(p, "You can't carry any more.", 'm-red'); return; }
+    b.qty -= moved;
+    if (b.qty <= 0) p.bank.splice(p.bank.indexOf(b), 1);
+    this.pushStats(p); this.pushBank(p);
+  }
+
+  // Filing a stack into one of the numbered tabs — purely organisational.
+  intentBankTab(p, id, tab) {
+    if (!this.bankOp(p)) return;
+    const b = p.bank.find(x => x.id === id);
+    if (!b) return;
+    b.tab = Math.max(1, Math.min(8, tab | 0));
+    this.pushBank(p);
   }
 
   // ---------- intents from clients ----------
@@ -294,6 +417,7 @@ class Sim {
 
   intentWalk(p, x, z) {
     p.action = null;
+    this.closeBank(p);              // walking off closes the window, as in RS2
     const path = World.findPath(p.layer, Math.floor(p.x), Math.floor(p.z), x, z);
     if (path) p.path = path;
   }
@@ -302,6 +426,9 @@ class Sim {
     // a: {kind:'chop'|'mine'|'fish'|'attack'|'take'|'climb', key?, x?, z?, npcId?, gid?}
     // attacking a NEW target resets the weapon timer so the first blow lands on arrival
     if (a && a.kind === 'attack' && (!p.action || p.action.kind !== 'attack' || p.action.npcId !== a.npcId)) p.nextAtkTick = 0;
+    // Doing anything else shuts the box — including walking to a different booth,
+    // which re-opens it on arrival with the right key.
+    if (!a || a.kind !== 'bank') this.closeBank(p);
     p.action = a;
     p.path = [];
   }
@@ -322,7 +449,7 @@ class Sim {
 
   intentEat(p, gidUnused, itemIndex) {
     const it = p.inv[itemIndex];
-    if (!it || !ITEMS[it.id].heal) return;
+    if (!it || it.noted || !ITEMS[it.id].heal) return;   // a note is a receipt, not a meal
     const def = ITEMS[it.id];
     p.inv.splice(itemIndex, 1);
     p.curHits = Math.min(this.maxHits(p), p.curHits + def.heal);
@@ -334,7 +461,10 @@ class Sim {
     const it = p.inv[itemIndex];
     if (!it) return;
     p.inv.splice(itemIndex, 1);
-    this.ground.push({ id: it.id, qty: it.qty, x: Math.floor(p.x), z: Math.floor(p.z), layer: p.layer, until: Date.now() + 180000 });
+    // `noted` has to travel with the item. Dropping a note for 1000 logs and letting
+    // anyone pick it up as 1000 real logs would be a duplication bug, and a lucrative
+    // one — the flag is what keeps a receipt a receipt.
+    this.ground.push({ id: it.id, qty: it.qty, noted: !!it.noted, x: Math.floor(p.x), z: Math.floor(p.z), layer: p.layer, until: Date.now() + 180000 });
     this.pushStats(p);
   }
 
@@ -438,12 +568,14 @@ class Sim {
   weaponSpeed(p) { const w = this.equippedIn(p, 'weapon'); return Combat.weaponSpeed(w ? w.id : null); }
   bestArrow(p) {
     let best = null, bestPow = -1;
-    for (const i of p.inv) { if (!i) continue; const d = ITEMS[i.id]; if (d.power && i.id.endsWith('_arrow') && d.power > bestPow) { bestPow = d.power; best = i.id; } }
+    // `!i.noted` matters: a note for 1000 arrows is a receipt, not a quiver.
+    for (const i of p.inv) { if (!i || i.noted) continue; const d = ITEMS[i.id]; if (d.power && i.id.endsWith('_arrow') && d.power > bestPow) { bestPow = d.power; best = i.id; } }
     return best;
   }
 
   wield(p, i) {
     const it = p.inv[i]; if (!it) return;
+    if (it.noted) { this.toPlayer(p, 'You need to reclaim that at a bank before you can wear it.', 'm-game'); return; }
     const def = ITEMS[it.id]; if (!def.slot) return;
     if (def.slot === 'weapon' && def.wield && this.level(p, 'attack') < def.wield) { this.toPlayer(p, 'You need Attack ' + def.wield + ' to wield that.', 'm-red'); return; }
     if (def.slot !== 'weapon' && def.defReq && this.level(p, 'defense') < def.defReq) { this.toPlayer(p, 'You need Defense ' + def.defReq + ' to wear that.', 'm-red'); return; }
@@ -510,9 +642,20 @@ class Sim {
       case 'fish': return this.doFish(p, a._s, now);
       case 'attack': return this.doAttack(p, a._n, now);
       case 'take': return this.doTake(p, a._g);
+      case 'bank': {
+        p.action = null;
+        if (a._s.type !== 'bank_booth') return;
+        // Remember which booth, so every later operation can re-check we are still
+        // standing at it rather than trusting a flag set once.
+        p.bankKey = a.key;
+        this.toPlayer(p, 'The banker hands you your box.', 'm-game');
+        this.pushBank(p, true);
+        return;
+      }
       case 'climb': {
         p.layer = a._s.type === 'ladder_down' ? 1 : 0;
         p.action = null;
+        this.closeBank(p);
         this.toPlayer(p, p.layer === 1 ? 'You climb down into the darkness...' : 'You climb up to the light.', 'm-game');
         this.emit({ kind: 'to', id: p.id, msg: { t: 'layer', layer: p.layer, x: p.x, z: p.z } });
         return;
@@ -645,11 +788,13 @@ class Sim {
       this.toPlayer(p, 'That is not yours yet.', 'm-red');
       p.action = null; return;
     }
-    if (this.add(p, g.id, g.qty)) {
+    // A dropped note is picked up as a note. Routing it through add() instead would
+    // mint the real items out of nothing.
+    if (g.noted ? this.addNote(p, g.id, g.qty) : this.add(p, g.id, g.qty)) {
       const i = this.ground.indexOf(g);
       if (i >= 0) this.ground.splice(i, 1);
       if (g.spawn) g.spawn.respawnAt = Date.now() + 60000;
-      this.toPlayer(p, 'You take the ' + ITEMS[g.id].name.toLowerCase() + '.');
+      this.toPlayer(p, 'You take the ' + ITEMS[g.id].name.toLowerCase() + (g.noted ? ' note.' : '.'));
       this.pushStats(p);
     } else this.toPlayer(p, "You can't carry any more.", 'm-red');
     p.action = null;
@@ -749,15 +894,19 @@ class Sim {
 
   killPlayer(p, now) {
     this.toPlayer(p, 'Oh dear! You are dead...', 'm-red');
+    this.closeBank(p);              // you respawn in town, not at the booth
     // keep 3 most valuable stacks, drop the rest where you fell
     const dx = Math.floor(p.x), dz = Math.floor(p.z), dl = p.layer;
     // rank pack AND worn gear together; keep the 3 best (+ quest items) in place, drop the rest
     const held = p.inv.map(it => ({ it, from: 'inv' })).concat(Object.keys(p.worn || {}).filter(s => p.worn[s]).map(s => ({ it: p.worn[s], from: 'worn', slot: s })));
-    held.sort((a, b) => (ITEMS[b.it.id].value || 0) * (b.it.qty || 1) - (ITEMS[a.it.id].value || 0) * (a.it.qty || 1));
+    // A note is worth nothing on the floor, so rank it at zero rather than letting a
+    // note for 1000 logs outrank real armour and survive the death drop.
+    const worth = (o) => o.it.noted ? 0 : (ITEMS[o.it.id].value || 0) * (o.it.qty || 1);
+    held.sort((a, b) => worth(b) - worth(a));
     let kept = 0; const newInv = [];
     for (const o of held) {
-      if (ITEMS[o.it.id].quest || kept < 3) { kept++; if (o.from === 'inv') newInv.push(o.it); } // kept worn gear stays worn
-      else { this.ground.push({ id: o.it.id, qty: o.it.qty || 1, x: dx, z: dz, layer: dl, until: now + 180000 }); if (o.from === 'worn') p.worn[o.slot] = null; }
+      if ((ITEMS[o.it.id].quest && !o.it.noted) || kept < 3) { kept++; if (o.from === 'inv') newInv.push(o.it); } // kept worn gear stays worn
+      else { this.ground.push({ id: o.it.id, qty: o.it.qty || 1, noted: !!o.it.noted, x: dx, z: dz, layer: dl, until: now + 180000 }); if (o.from === 'worn') p.worn[o.slot] = null; }
     }
     p.inv = newInv;
     p.curHits = this.maxHits(p);
@@ -781,7 +930,7 @@ class Sim {
         .map(n => ({ id: n.id, type: n.type, fx: n.fx, fz: n.fz, moving: n.moving, hits: n.hits, maxHits: n.maxHits,
                      splat: n.splat, showHp: n.showHp, fcx: n.faceX, fcz: n.faceZ, sw: n.swingSeq, swk: n.swingKind })),
       ground: this.ground.filter(g => g.layer === p.layer && near(g.x, g.z))
-        .map(g => ({ gid: g.gid, id: g.id, qty: g.qty, x: g.x, z: g.z })),
+        .map(g => ({ gid: g.gid, id: g.id, qty: g.qty, noted: g.noted || undefined, x: g.x, z: g.z })),
       events: Events.hudAll(this.eventCtx)
     };
   }

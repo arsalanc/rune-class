@@ -310,6 +310,12 @@ const Host = {
       case 'unequip': this.sim.intentUnequip(p, String(m.slot || '')); break;
       case 'style': if (m.style >= 0 && m.style < 4) { p.style = m.style | 0; this.sim.pushStats(p); } break;
       case 'run': this.sim.intentRun(p, !!m.on); break;
+      case 'bankdep': this.sim.intentBankDeposit(p, String(m.id || ''), m.qty | 0, m.tab | 0); break;
+      case 'bankdepslot': this.sim.intentBankDepositSlot(p, m.i | 0, m.qty | 0); break;
+      case 'bankdepall': this.sim.intentBankDepositAll(p); break;
+      case 'bankwd': this.sim.intentBankWithdraw(p, String(m.id || ''), m.qty | 0, !!m.note); break;
+      case 'banktab': this.sim.intentBankTab(p, String(m.id || ''), m.tab | 0); break;
+      case 'bankclose': this.sim.closeBank(p); break;
     }
     this._flush();
   },
