@@ -119,7 +119,7 @@ function makeRealm(tag) {
   `, ctx, { filename: 'stubs.js' });
 
   vm.runInContext(read('net.js'), ctx, { filename: 'net.js' });
-  vm.runInContext('var __x = { Host, Net, PAKE, Sim, World, Game, UI, NPC_DEFS, ITEMS, SHOP_DEFS, FLETCH_KNIFE, CRAFTABLES, QUEST_STEPS };', ctx, { filename: 'export.js' });
+  vm.runInContext('var __x = { Host, Net, PAKE, Sim, World, Game, UI, NPC_DEFS, ITEMS, SHOP_DEFS, FLETCH_KNIFE, CRAFTABLES, QUEST_STEPS, CROPS };', ctx, { filename: 'export.js' });
   return { ...ctx.__x, messages, ctx };
 }
 
@@ -479,6 +479,61 @@ guest.Net.craft('gem', 'uncut_sapphire', 9999);
 await sleep(700);
 check('a batch request is capped', sim2().count(simP(), 'sapphire') <= 28,
   'made ' + sim2().count(simP(), 'sapphire'));
+
+// --- farming: per-player patches, wall-clock growth ---
+const scenery = (type) => { for (const [key, s] of host.World.L[0].scenery) if (s.type === type) return { key, s }; return null; };
+const patch = scenery('farm_patch');
+check('the world has an allotment', !!patch);
+const standBy = (s) => { const p = simP(); p.x = s.x + 1.5; p.z = s.z + 0.5; p.layer = 0; p.path = []; };
+
+simP().xp = { hits: 1154, farming: 200000 };
+simP().inv = [];
+standBy(patch.s);
+guest.Net.action({ kind: 'rake', key: patch.key });
+await sleep(1400);
+check('raking without a rake is refused', sim2().patchOf(simP(), patch.s).state === 'weeds');
+
+simP().inv = [{ id: 'rake', qty: 1 }];
+standBy(patch.s);
+guest.Net.action({ kind: 'rake', key: patch.key });
+await sleep(1400);
+check('raking clears the patch', sim2().patchOf(simP(), patch.s).state === 'empty');
+
+const seedId = Object.keys(host.CROPS || {})[0] || 'potato_seed';
+simP().inv = [{ id: seedId, qty: 1 }];
+standBy(patch.s);
+guest.Net.action({ kind: 'plant', key: patch.key, seed: seedId });
+await sleep(1400);
+check('planting a seed starts a crop', sim2().patchOf(simP(), patch.s).state === 'growing');
+check('the seed was consumed', sim2().count(simP(), seedId) === 0);
+
+standBy(patch.s);
+guest.Net.action({ kind: 'harvest', key: patch.key });
+await sleep(1400);
+check('harvesting too early is refused', sim2().patchOf(simP(), patch.s).state === 'growing');
+
+// Growth is wall-clock, so winding plantedAt back is the same as waiting.
+const crop = host.CROPS ? host.CROPS[seedId] : null;
+sim2().patchOf(simP(), patch.s).plantedAt = Date.now() - ((crop ? crop.grow : 1) * 60000) - 1000;
+standBy(patch.s);
+guest.Net.action({ kind: 'harvest', key: patch.key });
+await sleep(1400);
+check('a ripe crop harvests', sim2().patchOf(simP(), patch.s).state === 'empty');
+check('and yields produce', crop ? sim2().count(simP(), crop.crop) > 0 : true);
+
+// Patches are per-player: the host's own allotment is untouched by all of that.
+const hostPatch = (() => { const c = [...host.Host.clients.values()].find(x => x.local); return sim2().patchOf(host.Host.sim.players.get(c.pid), patch.s); })();
+check('allotments are per-player, not shared', hostPatch.state === 'weeds');
+
+// The mill and the coop
+const mill = scenery('windmill');
+if (mill) {
+  simP().inv = [{ id: 'wheat', qty: 1 }];
+  standBy(mill.s);
+  guest.Net.action({ kind: 'mill', key: mill.key });
+  await sleep(1400);
+  check('the windmill grinds wheat into flour', sim2().count(simP(), 'flour') === 1);
+}
 
 // --- quests: progress is per-player, and the sim polices every step ---
 simP().inv = [];

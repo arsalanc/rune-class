@@ -122,11 +122,24 @@ Shared and authoritative: **movement (walk and run), woodcutting, mining, fishin
 combat (melee + ranged, per-weapon and per-NPC attack speeds, the combat triangle,
 worn equipment across all six slots, arrow recovery, melee adjacency), monster AI and
 aggro, loot, death, banking (including tabs and bank notes), shops, smelting,
-smithing, cooking, firemaking, crafting, fletching, herblore, chat, emotes, ladders,
-dynamic events, and seeing other players.**
+smithing, cooking, firemaking, crafting, fletching, herblore, farming, chat, emotes,
+ladders, dynamic events, and seeing other players.**
 
-Still singleplayer-only, and they say so when you try: farming, prayer, magic, and
-most quests.
+Still singleplayer-only, and they say so when you try: prayer, magic, and most
+quests.
+
+### Farming
+
+**Allotments are per-player**, keyed by tile and saved with the character, exactly as
+in singleplayer. Shared patches would mean whoever walked past first could harvest
+your crop, which is not a thing to do to a friend. Wheat plots are the exception —
+they are ordinary shared scenery on the same respawn timer trees and rocks use, so
+two players genuinely do compete for a sheaf.
+
+Growth is **wall-clock**, measured from `plantedAt`, so a crop keeps ripening while
+you are logged out and the sim never ticks a patch. The client mirrors the patch data
+and works out ripeness itself, which is why the existing patch menus read true
+online with no changes.
 
 ### Use item on item
 
@@ -164,11 +177,12 @@ the same reason `combat.js` and `cookBurnChance()` are shared.
 and quests whose steps live in that table. Everything else still says so, because its
 dialogue mutates player state directly and the authority would never see it.
 
-Ported so far: **The Guide's Lunch** and **The Artisan's Apprentice**, both
-completable end to end. Steps proved by a running total rather than an item held —
+Ported so far: **The Guide's Lunch**, **The Artisan's Apprentice** and **The Cook's
+Feast**, all completable end to end. Steps proved by a running total rather than an item held —
 the Apprentice's "light 2 fires" — use a `counter` field checked against a tally the
-sim keeps, so the client never touches it. The rest are blocked on ingredients, not
-on the framework: the Cook's Feast needs farm produce, and farming is still offline.
+sim keeps, so the client never touches it. Each of these was unblocked by a skill
+landing first — the Apprentice by crafting, the Cook's Feast by farming — which is
+why the skills went in before the quests that need them.
 
 ### Production skills
 

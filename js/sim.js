@@ -220,7 +220,7 @@ class Sim {
       xp: { hits: 1154 }, curHits: 10, style: 2,
       inv: [{ id: 'bronze_axe', qty: 1 }, { id: 'bronze_pickaxe', qty: 1 }, { id: 'tinderbox', qty: 1 }, { id: 'net', qty: 1 }],
       worn: this.emptyWorn(), nextAtkTick: 0, run: false, bank: [],
-      quests: {}, firesLit: 0, ratKills: 0
+      quests: {}, firesLit: 0, ratKills: 0, patches: {}
     };
   }
 
@@ -236,6 +236,10 @@ class Sim {
     p.quests = (d.quests && typeof d.quests === 'object') ? Object.assign({}, d.quests) : {};
     p.firesLit = d.firesLit | 0;
     p.ratKills = d.ratKills | 0;
+    // Crop patches are per-player, as in singleplayer: everyone tends their own
+    // allotment on the same tile. Shared patches would mean whoever walked past
+    // first could harvest your crop, which is not a thing to do to a friend.
+    p.patches = (d.patches && typeof d.patches === 'object') ? Object.assign({}, d.patches) : {};
     // Sanitise on load: a save is written by the host's own storage, but a corrupt or
     // hand-edited one should not be able to conjure items that do not exist.
     p.bank = Array.isArray(d.bank)
@@ -252,7 +256,7 @@ class Sim {
 
   toSave(p) {
     return { xp: p.xp, curHits: p.curHits, inv: p.inv, worn: p.worn, x: p.x, z: p.z, layer: p.layer, style: p.style, run: !!p.run, bank: p.bank || [],
-             quests: p.quests || {}, firesLit: p.firesLit | 0, ratKills: p.ratKills | 0 };
+             quests: p.quests || {}, firesLit: p.firesLit | 0, ratKills: p.ratKills | 0, patches: p.patches || {} };
   }
 
   level(p, sk) { return levelForXp(p.xp[sk] || 0); }
@@ -274,7 +278,7 @@ class Sim {
     this.pushStats(p);
   }
 
-  pushStats(p) { this.emit({ kind: 'to', id: p.id, msg: { t: 'you', xp: p.xp, curHits: p.curHits, maxHits: this.maxHits(p), inv: p.inv, worn: p.worn, style: p.style, run: !!p.run, quests: p.quests || {}, firesLit: p.firesLit | 0, ratKills: p.ratKills | 0 } }); }
+  pushStats(p) { this.emit({ kind: 'to', id: p.id, msg: { t: 'you', xp: p.xp, curHits: p.curHits, maxHits: this.maxHits(p), inv: p.inv, worn: p.worn, style: p.style, run: !!p.run, quests: p.quests || {}, firesLit: p.firesLit | 0, ratKills: p.ratKills | 0, patches: p.patches || {} } }); }
   toPlayer(p, text, cls) { this.emit({ kind: 'to', id: p.id, msg: { t: 'msg', text, cls: cls || 'm-game' } }); }
 
   // ---------- inventory ----------
@@ -915,6 +919,13 @@ class Sim {
       // Production actions repeat every slow tick until the materials run out, the
       // same way singleplayer keeps P.action set — so one click smelts a whole
       // inventory. Each one clears p.action itself when it cannot continue.
+      case 'rake': return this.doRake(p, a);
+      case 'plant': return this.doPlant(p, a);
+      case 'harvest': return this.doHarvest(p, a);
+      case 'wheat': return this.doPickWheat(p, a);
+      case 'mill': return this.doGrindFlour(p, a);
+      case 'coop': return this.doSearchCoop(p, a);
+      case 'milk': return this.doMilkCow(p, a);
       case 'smelt': return this.doSmelt(p, a);
       case 'smith': return this.doSmith(p, a);
       case 'cook': return this.doCook(p, a);
@@ -938,6 +949,123 @@ class Sim {
       }
       default: p.action = null;
     }
+  }
+
+  // ---------- farming ----------
+  // Patches are keyed by tile and live on the player, so two people can each tend
+  // the same allotment without treading on one another. Growth is wall-clock, which
+  // means a crop keeps ripening while you are logged out — that is the whole shape
+  // of the skill, and it needs no ticking here at all.
+  patchOf(p, s) {
+    if (!p.patches) p.patches = {};
+    const k = World.key(s.x, s.z);
+    if (!p.patches[k]) p.patches[k] = { state: 'weeds' };
+    return p.patches[k];
+  }
+  patchStateOf(p, s) {
+    const pt = this.patchOf(p, s);
+    if (pt.state !== 'growing') return { state: pt.state, seed: pt.seed, pct: 0 };
+    const c = CROPS[pt.seed];
+    if (!c) return { state: 'empty', seed: null, pct: 0 };
+    const pct = Math.min(1, (Date.now() - pt.plantedAt) / (c.grow * 60000));
+    return { state: pct >= 1 ? 'ready' : 'growing', seed: pt.seed, pct };
+  }
+
+  doRake(p, a) {
+    p.action = null;
+    if (a._s.type !== 'farm_patch') return;
+    const pt = this.patchOf(p, a._s);
+    if (pt.state !== 'weeds') { this.toPlayer(p, 'This patch is already clear.', 'm-game'); return; }
+    if (!this.has(p, 'rake')) { this.toPlayer(p, 'You need a rake to clear the weeds. Farmer Wend sells them.', 'm-red'); return; }
+    pt.state = 'empty';
+    this.addXp(p, 'farming', 4);
+    this.toPlayer(p, 'You rake the weeds out of the patch. It is ready for a seed.', 'm-game');
+    this.pushStats(p);
+  }
+
+  doPlant(p, a) {
+    p.action = null;
+    if (a._s.type !== 'farm_patch') return;
+    const c = CROPS[a.seed]; if (!c) return;
+    const pt = this.patchOf(p, a._s);
+    if (pt.state !== 'empty') { this.toPlayer(p, 'Something is already growing here.', 'm-game'); return; }
+    if (this.level(p, 'farming') < c.lvl) { this.toPlayer(p, 'You need a Farming level of ' + c.lvl + ' to plant that.', 'm-red'); return; }
+    if (!this.has(p, a.seed)) return;
+    this.remove(p, a.seed, 1);
+    pt.state = 'growing'; pt.seed = a.seed; pt.plantedAt = Date.now();
+    this.addXp(p, 'farming', c.plantXp);
+    this.toPlayer(p, 'You plant the ' + c.name.toLowerCase() + ' seed. It will be ready in about ' + c.grow + ' minutes.', 'm-game');
+    this.pushStats(p);
+  }
+
+  doHarvest(p, a) {
+    p.action = null;
+    if (a._s.type !== 'farm_patch') return;
+    const st = this.patchStateOf(p, a._s), pt = this.patchOf(p, a._s);
+    if (st.state === 'weeds') { this.toPlayer(p, 'The patch is thick with weeds. Rake it first.', 'm-red'); return; }
+    if (st.state === 'empty') { this.toPlayer(p, 'There is nothing planted here.', 'm-game'); return; }
+    const c = CROPS[st.seed];
+    if (st.state === 'growing') {
+      const left = Math.max(1, Math.ceil(c.grow * (1 - st.pct)));
+      this.toPlayer(p, 'The ' + c.name.toLowerCase() + ' are still coming up — about ' + left + ' more minute' + (left === 1 ? '' : 's') + '.', 'm-game');
+      return;
+    }
+    // a higher Farming level pulls more out of the same patch
+    const bonus = Math.floor(this.level(p, 'farming') / 20);
+    const n = c.yield[0] + Math.floor(Math.random() * (c.yield[1] - c.yield[0] + 1)) + bonus;
+    let got = 0;
+    for (let i = 0; i < n; i++) { if (!this.add(p, c.crop, 1)) break; got++; this.addXp(p, 'farming', c.cropXp); }
+    if (!got) { this.toPlayer(p, "You can't carry any more.", 'm-red'); return; }
+    pt.state = 'empty'; pt.seed = null; pt.plantedAt = 0;
+    this.toPlayer(p, 'You harvest ' + got + ' ' + ITEMS[c.crop].name.toLowerCase() + '.', 'm-game');
+    this.pushStats(p);
+  }
+
+  // Wheat is shared scenery — one sheaf per plot, and it regrows on the same
+  // respawn machinery trees and rocks use, so two players do compete for it.
+  doPickWheat(p, a) {
+    p.action = null;
+    if (a._s.type !== 'wheat') return;
+    if (!this.add(p, 'wheat', 1)) { this.toPlayer(p, "You can't carry any more.", 'm-red'); return; }
+    this.addXp(p, 'farming', 8);
+    this.toPlayer(p, 'You pick a sheaf of ripe wheat.', 'm-game');
+    this.setScenery(p.layer, a._s.x, a._s.z, null, 'wheat', Date.now() + 15000);
+    this.pushStats(p);
+  }
+
+  doGrindFlour(p, a) {
+    p.action = null;
+    if (a._s.type !== 'windmill') return;
+    if (!this.has(p, 'wheat')) { this.toPlayer(p, 'You need some wheat to grind. Pick it from the field first.', 'm-red'); return; }
+    this.remove(p, 'wheat', 1);
+    if (!this.add(p, 'flour', 1)) { this.add(p, 'wheat', 1); this.toPlayer(p, "You can't carry any more.", 'm-red'); return; }
+    this.addXp(p, 'farming', 12);
+    this.toPlayer(p, 'You grind the wheat into a pot of flour.', 'm-game');
+    this.pushStats(p);
+  }
+
+  doSearchCoop(p, a) {
+    p.action = null;
+    if (a._s.type !== 'chicken_coop') return;
+    if (Math.random() < 0.5) {
+      if (!this.add(p, 'egg', 1)) { this.toPlayer(p, "You can't carry any more.", 'm-red'); return; }
+      this.toPlayer(p, 'You search the coop and find a fresh egg.', 'm-game');
+    } else {
+      const n = 2 + (Math.random() * 4 | 0);
+      if (!this.add(p, 'feather', n)) { this.toPlayer(p, "You can't carry any more.", 'm-red'); return; }
+      this.toPlayer(p, 'You find some feathers among the straw.', 'm-game');
+    }
+    this.pushStats(p);
+  }
+
+  doMilkCow(p, a) {
+    p.action = null;
+    const n = a._n; if (!n || !NPC_DEFS[n.type] || !NPC_DEFS[n.type].milk) return;
+    if (!this.has(p, 'bucket')) { this.toPlayer(p, 'You need an empty bucket to milk a cow.', 'm-red'); return; }
+    this.remove(p, 'bucket', 1);
+    this.add(p, 'bucket_of_milk', 1);
+    this.toPlayer(p, 'You milk the cow, filling your bucket.', 'm-game');
+    this.pushStats(p);
   }
 
   // ---------- production ----------

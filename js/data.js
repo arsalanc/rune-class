@@ -516,6 +516,16 @@ const QUEST_STEPS = {
       { from: 4, to: 5, needs: { shrimp: 1 }, xp: { fishing: 250, cooking: 250 } },
       { from: 5, to: 6, needs: { leather_coif: 1 }, xp: { crafting: 350 }, give: { coins: 300 } }
     ]
+  },
+  // Unblocked by farming: the egg comes from the coop, the milk from a cow and the
+  // flour from wheat at the windmill.
+  cooksfeast: {
+    name: "The Cook's Feast",
+    steps: [
+      { from: 0, to: 1, give: { bucket: 1 } },
+      { from: 1, to: 2, needs: { egg: 1, bucket_of_milk: 1, flour: 1 },
+        give: { coins: 250, chefs_hat: 1 }, xp: { cooking: 500 } }
+    ]
   }
 };
 

@@ -310,6 +310,10 @@ const Net = {
     // Counters the sim keeps that quest steps are proved against.
     if (typeof m.firesLit === 'number') P.firesLit = m.firesLit;
     if (typeof m.ratKills === 'number') P.ratKills = m.ratKills;
+    // Crop patches are per-player and owned by the authority. Mirroring them means
+    // the existing patch rendering and option menus read true — growth is wall-clock,
+    // so the client can work out ripeness itself from plantedAt.
+    if (m.patches) P.patches = m.patches;
     UI.renderInventory(); UI.renderStats(); UI.renderEquipment();
   },
 

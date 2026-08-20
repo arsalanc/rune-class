@@ -48,13 +48,13 @@ worn equipment via wield/unequip across all six slots — head, cape, body, legs
 weapon, shield — arrow recovery from Ava's Satchel, melee adjacency), monster
 AI/aggro, loot, death, banking (tabs and bank notes included), shops with
 shared stock, smelting, smithing, cooking, firemaking, crafting, fletching,
-herblore, chat, and seeing other players**. NPC spawns and world
+herblore, farming, chat, and seeing other players**. NPC spawns and world
 content (farms, training yard, Hollow-folk camp, Giants' Den, town walls,
 Southmarch and the Rookmoor road) match singleplayer.
 
-Still singleplayer-only for now (they show a notice when you try): farming
-actions, prayer, magic, and most quests. Two quests are ported — The Guide's
-Lunch and The Artisan's Apprentice. Because the
+Still singleplayer-only for now (they show a notice when you try): prayer,
+magic, and most quests. Three quests are ported — The Guide's Lunch, The
+Artisan's Apprentice and The Cook's Feast. Because the
 combat/skilling maths are now shared modules, bringing these online later is
 mostly writing the intents + server handlers — the rules already live in one place.
 

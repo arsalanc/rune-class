@@ -2080,7 +2080,8 @@ const Game = {
     if (!seeds.length) { this.msg('You have no seeds. Farmer Wend sells them by the handful.', 'm-red'); return; }
     const opts = seeds.map(id => ({
       label: CROPS[id].name + ' (lvl ' + CROPS[id].lvl + ', ' + CROPS[id].grow + ' min)',
-      cb: () => this.plantSeed(s, id)
+      // Same picker either way; multiplayer sends the choice rather than planting it.
+      cb: () => this.netMode ? this.netAction('plant', { s }, { seed: id }) : this.plantSeed(s, id)
     }));
     opts.push({ label: 'Cancel', cb: () => {} });
     UI.showMenu(window.innerWidth / 2 - 100, window.innerHeight / 2 - 70, opts);
@@ -2279,7 +2280,7 @@ const Game = {
   // quest whose steps live in QUEST_STEPS and are therefore re-checked by the sim.
   // Everything else still says so, because its dialogue mutates player state
   // directly and the authority would never see it.
-  NET_TALK: ['guide', 'artisan', 'banker', 'instructor', 'townsman', 'townswoman', 'villager', 'bartender', 'innkeeper', 'farmer', 'farmhand', 'marshal'],
+  NET_TALK: ['guide', 'artisan', 'cook', 'banker', 'instructor', 'townsman', 'townswoman', 'villager', 'bartender', 'innkeeper', 'farmer', 'farmhand', 'marshal'],
   netTalkTo(n) {
     const d = NPC_DEFS[n.type];
     if (!this.NET_TALK.includes(n.type)) return this.netTodo();
@@ -3279,8 +3280,7 @@ const Game = {
         ['Cook', "The Duke's feast is tonight and I've a cake to bake, but my pantry is BARE."],
         { who: 'Cook', text: "I need an egg, a bucket of milk and a pot of flour. Will you help me?", choices: [
           { label: "Of course — where do I start?", cb: () => {
-            this.player.quests.cooksfeast = 1; UI.renderQuests();
-            if (!this.hasItem('bucket')) this.addItem('bucket', 1);
+            this.questAdvance('cooksfeast');
             this.dialogue([
               ['Cook', "You're a lifesaver! Green Vale Farm lies west, past the mine road."],
               ['Cook', "Take this bucket — milk a cow, nab an egg from the coop, and grind wheat at the windmill."],
@@ -3292,9 +3292,8 @@ const Game = {
         ] }
       ]);
     } else if (q.cooksfeast === 1) {
-      if (this.hasItem('egg') && this.hasItem('bucket_of_milk') && this.hasItem('flour')) {
-        this.removeItem('egg', 1); this.removeItem('bucket_of_milk', 1); this.removeItem('flour', 1);
-        this.addItem('coins', 250); this.addItem('chefs_hat', 1); this.addXp('cooking', 500);
+      if (this.questReady('cooksfeast')) {
+        this.questAdvance('cooksfeast');
         this.dialogue([
           ['You', "Here — one egg, a bucket of milk, and a pot of flour."],
           ['Cook', "You wonderful soul! The feast is SAVED! Here, coins for your trouble..."],
@@ -3302,7 +3301,7 @@ const Game = {
           ['', 'You have completed the quest: The Cook\'s Feast!'],
           ['', 'Reward: 250 coins, a Chef hat, and 500 Cooking xp.']
         ]);
-        Sound.play('coins'); q.cooksfeast = 2; UI.renderQuests();
+        Sound.play('coins');
       } else {
         const need = [];
         if (!this.hasItem('egg')) need.push('an egg');
@@ -3445,6 +3444,18 @@ const Game = {
       else if (s.type === 'anvil') opts.push({ label: 'Use ' + def.name, cb: () => this.smithMenu(World.key(s.x, s.z), s) });
       else if (s.type === 'range' || s.type === 'fire') opts.push({ label: 'Cook-on ' + def.name, cb: () => this.netAction('cook', { s }) });
       else if (s.type === 'altar') opts.push({ label: 'Use ' + def.name, cb: () => this.netTodo() });
+      // Farming. patchState() reads the mirrored patches, so these say the same
+      // thing they do offline; the sim re-checks state, level and tool.
+      if (s.type === 'wheat') opts.push({ label: 'Pick wheat', cb: () => this.netAction('wheat', { s }) });
+      if (s.type === 'windmill') opts.push({ label: 'Grind wheat', cb: () => this.netAction('mill', { s }) });
+      if (s.type === 'chicken_coop') opts.push({ label: 'Search coop', cb: () => this.netAction('coop', { s }) });
+      if (s.type === 'farm_patch') {
+        const st = this.patchState(s);
+        if (st.state === 'weeds') opts.push({ label: 'Rake Allotment', cb: () => this.netAction('rake', { s }) });
+        else if (st.state === 'empty') opts.push({ label: 'Plant seed in Allotment', cb: () => this.plantMenu(s) });
+        else if (st.state === 'ready') opts.push({ label: 'Harvest ' + CROPS[st.seed].name, cb: () => this.netAction('harvest', { s }) });
+        else opts.push({ label: 'Inspect ' + CROPS[st.seed].name, cb: () => this.netAction('harvest', { s }) });
+      }
       opts.push({ label: 'Examine ' + def.name, cb: () => this.msg(def.examine, 'm-game') });
     } else if (ref.kind === 'npc') {
       const n = ref.n, d = NPC_DEFS[n.type];
@@ -3464,6 +3475,7 @@ const Game = {
       // Ghostly traders stay shut online — they are gated behind quest progress the
       // sim does not model, so opening them would hand out a quest reward for free.
       if (d.trade && !d.ghostly) opts.push({ label: 'Trade ' + d.name, cb: () => { this.mark(n.x !== undefined ? n.x : n.fx, n.z !== undefined ? n.z : n.fz, 'action'); Net.shopOpen(n.id); } });
+      if (d.milk) opts.push({ label: 'Milk ' + d.name, cb: () => this.netAction('milk', { n }) });
       opts.push({ label: 'Examine ' + d.name, cb: () => this.msg(d.examine, 'm-game') });
     } else if (ref.kind === 'ground') {
       const g = ref.g, def = ITEMS[g.id];
