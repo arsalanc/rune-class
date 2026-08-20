@@ -322,6 +322,7 @@ const Host = {
       case 'shopclose': this.sim.closeShop(p); break;
       case 'firemake': this.sim.intentFiremake(p, String(m.id || '')); break;
       case 'quest': this.sim.intentQuestStep(p, String(m.id || '')); break;
+      case 'craft': this.sim.intentCraft(p, String(m.kind || ''), m.arg, m.qty | 0); break;
     }
     this._flush();
   },

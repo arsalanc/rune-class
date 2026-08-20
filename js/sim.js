@@ -274,7 +274,7 @@ class Sim {
     this.pushStats(p);
   }
 
-  pushStats(p) { this.emit({ kind: 'to', id: p.id, msg: { t: 'you', xp: p.xp, curHits: p.curHits, maxHits: this.maxHits(p), inv: p.inv, worn: p.worn, style: p.style, run: !!p.run, quests: p.quests || {} } }); }
+  pushStats(p) { this.emit({ kind: 'to', id: p.id, msg: { t: 'you', xp: p.xp, curHits: p.curHits, maxHits: this.maxHits(p), inv: p.inv, worn: p.worn, style: p.style, run: !!p.run, quests: p.quests || {}, firesLit: p.firesLit | 0, ratKills: p.ratKills | 0 } }); }
   toPlayer(p, text, cls) { this.emit({ kind: 'to', id: p.id, msg: { t: 'msg', text, cls: cls || 'm-game' } }); }
 
   // ---------- inventory ----------
@@ -510,6 +510,134 @@ class Sim {
     this.pushShopToViewers(p.shopId, p.id);
   }
 
+  // ---------- crafting, fletching, herblore ----------
+  // These all reach the player the same way — "use this item on that one" — so they
+  // share one intent instead of nine. The client works out *which* recipe from the
+  // two items it combined and, where there is a choice, shows the same menu it always
+  // has; the sim then re-derives everything from the shared tables and re-checks the
+  // level and the materials. Nothing here trusts the client beyond "the player asked
+  // for recipe X".
+  //
+  // `qty` is the batch count — singleplayer offers "make all", and one intent doing
+  // the loop beats the client firing twenty-eight of them.
+  intentCraft(p, kind, arg, qty) {
+    qty = Math.max(1, Math.min(qty | 0 || 1, 28));
+    let made = 0;
+    for (let i = 0; i < qty; i++) if (this.craftOnce(p, kind, arg, made === 0)) made++; else break;
+    if (made) this.pushStats(p);
+  }
+
+  // One unit of production. `loud` is only true for the first attempt, so a batch
+  // reports its failure once rather than twenty-eight times.
+  craftOnce(p, kind, arg, loud) {
+    const say = (t, c) => { if (loud) this.toPlayer(p, t, c || 'm-red'); };
+    const need = (skill, lvl, what) => {
+      if (this.level(p, skill) < lvl) { say('You need a ' + skill[0].toUpperCase() + skill.slice(1) + ' level of ' + lvl + ' ' + what + '.'); return false; }
+      return true;
+    };
+
+    switch (kind) {
+      case 'gem': {                                   // chisel on an uncut gem
+        const r = GEM_CUTS[arg]; if (!r) return false;
+        if (!this.has(p, 'chisel')) { say('You need a chisel to cut a gem.'); return false; }
+        if (!need('crafting', r.lvl, 'to cut that')) return false;
+        if (!this.has(p, arg)) return false;
+        this.remove(p, arg, 1);
+        if (!this.add(p, r.id, 1)) { this.add(p, arg, 1); return false; }
+        this.addXp(p, 'crafting', r.xp);
+        this.toPlayer(p, 'You cut the ' + ITEMS[arg].name.toLowerCase().replace('uncut ', '') + '.', 'm-game');
+        return true;
+      }
+      case 'fletchlog': {                             // knife on logs -> chosen product
+        const list = FLETCH_KNIFE[arg && arg.log] || [];
+        const r = list.find(x => x.id === (arg && arg.id)); if (!r) return false;
+        if (!this.has(p, 'knife')) { say('You need a knife to cut the wood.'); return false; }
+        if (!need('fletching', r.lvl, 'to make that')) return false;
+        if (!this.has(p, arg.log)) { say('You have run out of ' + ITEMS[arg.log].name.toLowerCase() + '.', 'm-game'); return false; }
+        this.remove(p, arg.log, 1);
+        this.add(p, r.id, r.qty);
+        this.addXp(p, 'fletching', r.xp);
+        this.toPlayer(p, 'You carefully cut the wood into ' + (r.qty > 1 ? r.qty + ' ' : 'a ') + ITEMS[r.id].name.toLowerCase() + '.', 'm-game');
+        return true;
+      }
+      case 'stringbow': {                             // bowstring on an unstrung bow
+        const r = FLETCH_STRING[arg]; if (!r) return false;
+        if (!need('fletching', r.lvl, 'to string that')) return false;
+        if (!this.has(p, 'bowstring') || !this.has(p, arg)) { say('You need a bow string.'); return false; }
+        this.remove(p, arg, 1); this.remove(p, 'bowstring', 1);
+        this.add(p, r.id, 1);
+        this.addXp(p, 'fletching', r.xp);
+        this.toPlayer(p, 'You add a string to the bow, making a ' + ITEMS[r.id].name.toLowerCase() + '.', 'm-game');
+        return true;
+      }
+      case 'headless': {                              // feathers on arrow shafts
+        const n = Math.min(15, this.count(p, 'feather'), this.count(p, 'arrow_shafts'));
+        if (n <= 0) return false;
+        this.remove(p, 'feather', n); this.remove(p, 'arrow_shafts', n);
+        this.add(p, 'headless_arrows', n);
+        this.addXp(p, 'fletching', 1 * n);
+        this.toPlayer(p, 'You attach feathers to ' + n + ' arrow shafts.', 'm-game');
+        return true;
+      }
+      case 'arrows': {                                // arrowheads on headless arrows
+        const r = FLETCH_ARROW[arg]; if (!r) return false;
+        if (!need('fletching', r.lvl, 'to make those arrows')) return false;
+        const n = Math.min(15, this.count(p, arg), this.count(p, 'headless_arrows'));
+        if (n <= 0) { say('You need headless arrows and arrowheads.'); return false; }
+        this.remove(p, arg, n); this.remove(p, 'headless_arrows', n);
+        this.add(p, r.id, n);
+        this.addXp(p, 'fletching', r.xp / 15 * n);
+        this.toPlayer(p, 'You attach ' + n + ' arrowheads, making ' + n + ' ' + ITEMS[r.id].name.toLowerCase() + '.', 'm-game');
+        return true;
+      }
+      case 'leather': {                               // needle on leather -> chosen product
+        const r = CRAFTABLES.find(x => x.id === arg); if (!r) return false;
+        if (!this.has(p, 'needle')) { say('You need a needle to stitch that.'); return false; }
+        if (!need('crafting', r.lvl, 'for that')) return false;
+        if (r.leather && this.count(p, 'leather') < r.leather) { say('You need ' + r.leather + ' leather for that.'); return false; }
+        for (const id in (r.extra || {}))
+          if (this.count(p, id) < r.extra[id]) { say('You need ' + r.extra[id] + ' ' + ITEMS[id].name.toLowerCase() + ' for that.'); return false; }
+        if (r.leather) this.remove(p, 'leather', r.leather);
+        for (const id in (r.extra || {})) this.remove(p, id, r.extra[id]);
+        this.add(p, r.id, 1);
+        this.addXp(p, 'crafting', r.xp);
+        this.toPlayer(p, 'You stitch together a ' + ITEMS[r.id].name.toLowerCase() + '.', 'm-game');
+        return true;
+      }
+      case 'grind': {                                 // pestle and mortar
+        if (!GRINDABLES[arg]) return false;
+        if (!this.has(p, 'pestle') || !this.has(p, arg)) return false;
+        this.remove(p, arg, 1);
+        if (!this.add(p, GRINDABLES[arg], 1)) { this.add(p, arg, 1); return false; }
+        this.toPlayer(p, 'You grind it to a powder.', 'm-game');
+        return true;
+      }
+      case 'unf': {                                   // herb into a vial of water
+        const unf = UNF_BY_HERB[arg]; if (!unf) return false;
+        const rec = POTIONS.find(r => r.id + '_unf' === unf); if (!rec) return false;
+        if (!need('herblore', rec.lvl, 'for that mixture')) return false;
+        if (!this.has(p, arg) || !this.has(p, 'vial_of_water')) return false;
+        this.remove(p, arg, 1); this.remove(p, 'vial_of_water', 1);
+        if (!this.add(p, unf, 1)) { this.add(p, arg, 1); this.add(p, 'vial_of_water', 1); return false; }
+        this.toPlayer(p, 'You grind the herb into the water. It clouds over.', 'm-game');
+        return true;
+      }
+      case 'potion': {                                // secondary into an unfinished potion
+        const list = POTION_BY_UNF[arg && arg.unf] || [];
+        const rec = list.find(r => r.sec === (arg && arg.sec)); if (!rec) return false;
+        if (!need('herblore', rec.lvl, 'to finish that')) return false;
+        const unf = rec.id + '_unf';
+        if (!this.has(p, unf) || !this.has(p, rec.sec)) return false;
+        this.remove(p, unf, 1); this.remove(p, rec.sec, 1);
+        if (!this.add(p, rec.id, 1)) { this.add(p, unf, 1); this.add(p, rec.sec, 1); return false; }
+        this.addXp(p, 'herblore', rec.xp);
+        this.toPlayer(p, 'You mix the ' + ITEMS[rec.sec].name.toLowerCase() + ' in. You have a ' + ITEMS[rec.id].name.toLowerCase() + '.', 'm-lvl');
+        return true;
+      }
+    }
+    return false;
+  }
+
   // ---------- quests ----------
   // The client renders the dialogue — it has all the text, and text is harmless. But
   // it only ever *asks* to advance a quest, and this re-reads the shared step table
@@ -522,6 +650,11 @@ class Sim {
     if (!step) return;                                   // unknown quest, or already past this
     for (const [id, q] of Object.entries(step.needs || {}))
       if (this.count(p, id) < q) { this.toPlayer(p, "You don't have what is needed yet.", 'm-red'); return; }
+    // Counter steps are proved by a running total the sim keeps (fires lit, rats
+    // killed) rather than by something held, so they cannot be faked by the client
+    // either — it never touches these.
+    for (const [key, n] of Object.entries(step.counter || {}))
+      if ((p[key] | 0) < n) { this.toPlayer(p, "You haven't done that yet.", 'm-red'); return; }
 
     for (const [id, q] of Object.entries(step.needs || {})) this.remove(p, id, q);
     for (const [id, q] of Object.entries(step.give || {})) this.add(p, id, q);
@@ -894,6 +1027,7 @@ class Sim {
       const s = World.L[0].scenery.get(World.key(x, z));
       if (s) { s.expireAt = Date.now() + 60000; s.respawnAt = 0; }
       this.addXp(p, 'firemaking', ITEMS[logId].fmXp || 40);
+      p.firesLit = (p.firesLit | 0) + 1;      // proves the Apprentice's firemaking lesson
       this.toPlayer(p, 'The fire catches and the logs begin to burn.', 'm-game');
       // step off the fire, as singleplayer does
       if (!World.blocked(0, x - 1, z)) p.path = [{ x: x - 1, z }];

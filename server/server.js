@@ -78,6 +78,7 @@ wss.on('connection', (ws) => {
       case 'shopclose': sim.closeShop(p); break;
       case 'firemake': sim.intentFiremake(p, String(m.id || '')); break;
       case 'quest': sim.intentQuestStep(p, String(m.id || '')); break;
+      case 'craft': sim.intentCraft(p, String(m.kind || ''), m.arg, m.qty | 0); break;
     }
   });
 

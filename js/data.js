@@ -501,6 +501,21 @@ const QUEST_STEPS = {
       { from: 0, to: 1 },
       { from: 1, to: 2, needs: { shrimp: 3 }, give: { coins: 100 }, xp: { cooking: 300 } }
     ]
+  },
+  // Thessaly's tutorial. Every lesson is now completable online: chopping, fires,
+  // smelting, fishing/cooking and — since leatherworking came online — the coif.
+  // `counter` steps are proved by a running total the sim keeps rather than by an
+  // item held, which is why they cannot be expressed with `needs` alone.
+  apprentice: {
+    name: "The Artisan's Apprentice",
+    steps: [
+      { from: 0, to: 1, give: { needle: 1 } },
+      { from: 1, to: 2, needs: { logs: 3 }, xp: { woodcut: 250 } },
+      { from: 2, to: 3, counter: { firesLit: 2 }, xp: { firemaking: 250 } },
+      { from: 3, to: 4, needs: { bronze_bar: 1 }, xp: { mining: 250, smithing: 220 } },
+      { from: 4, to: 5, needs: { shrimp: 1 }, xp: { fishing: 250, cooking: 250 } },
+      { from: 5, to: 6, needs: { leather_coif: 1 }, xp: { crafting: 350 }, give: { coins: 300 } }
+    ]
   }
 };
 

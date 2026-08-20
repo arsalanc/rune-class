@@ -119,7 +119,7 @@ function makeRealm(tag) {
   `, ctx, { filename: 'stubs.js' });
 
   vm.runInContext(read('net.js'), ctx, { filename: 'net.js' });
-  vm.runInContext('var __x = { Host, Net, PAKE, Sim, World, Game, UI, NPC_DEFS, ITEMS, SHOP_DEFS };', ctx, { filename: 'export.js' });
+  vm.runInContext('var __x = { Host, Net, PAKE, Sim, World, Game, UI, NPC_DEFS, ITEMS, SHOP_DEFS, FLETCH_KNIFE, CRAFTABLES, QUEST_STEPS };', ctx, { filename: 'export.js' });
   return { ...ctx.__x, messages, ctx };
 }
 
@@ -212,7 +212,7 @@ const standAtBooth = () => { const p = P(); p.x = booth.s.x + 0.5; p.z = booth.s
 
 standAtBooth();
 guest.Net.action({ kind: 'bank', key: booth.key });
-await sleep(600);
+await sleep(1400);   // scenery actions resolve on the 600ms slow tick, so leave two
 check('using a booth opens the bank', P().bankKey === booth.key);
 check('the guest received the bank contents', Array.isArray(guest.Game.player.bank));
 
@@ -256,7 +256,7 @@ check('it comes back as a note', (P().inv.find(i => i.noted) || {}).qty === 12);
 // Banking a note by slot reclaims it as real stock.
 standAtBooth();
 guest.Net.action({ kind: 'bank', key: booth.key });
-await sleep(600);
+await sleep(1400);   // scenery actions resolve on the 600ms slow tick, so leave two
 guest.Net.bankDepositSlot(P().inv.findIndex(i => i.noted), 12);
 await sleep(400);
 check('depositing a note returns the real items to the bank',
@@ -265,7 +265,7 @@ check('the note is gone from the pack', !P().inv.some(i => i.noted));
 
 // --- the authority refuses banking from out of range ---
 guest.Net.action({ kind: 'bank', key: booth.key });
-await sleep(600);
+await sleep(1400);   // scenery actions resolve on the 600ms slow tick, so leave two
 const bankedBefore = (P().bank.find(b => b.id === 'logs') || {}).qty;
 P().x = booth.s.x + 20; P().z = booth.s.z + 20;      // teleport away without walking
 guest.Net.bankWithdraw('logs', 12, false);
@@ -434,6 +434,51 @@ guest.Net.firemake('logs');
 await sleep(500);
 check('lighting a fire without a tinderbox is refused',
   !host.World.L[0].scenery.has(host.World.key(spot2.x, spot2.z)));
+
+// --- crafting / fletching / herblore ---
+// One intent covers every "use item on item" recipe; the sim re-derives each from
+// the shared tables and re-checks level and materials.
+const sim2 = () => host.Host.sim;
+simP().xp = { hits: 1154, crafting: 200000, fletching: 200000, herblore: 200000 };
+simP().inv = [{ id: 'chisel', qty: 1 }, { id: 'uncut_sapphire', qty: 3 }];
+guest.Net.craft('gem', 'uncut_sapphire', 3);
+await sleep(500);
+check('cutting gems works and batches', sim2().count(simP(), 'sapphire') === 3);
+check('the uncut gems were consumed', sim2().count(simP(), 'uncut_sapphire') === 0);
+
+simP().inv = [{ id: 'knife', qty: 1 }, { id: 'logs', qty: 4 }];
+const fletchProduct = host.FLETCH_KNIFE.logs[0];
+guest.Net.craft('fletchlog', { log: 'logs', id: fletchProduct.id }, 4);
+await sleep(500);
+check('fletching logs works', sim2().count(simP(), fletchProduct.id) > 0);
+check('the logs were consumed', sim2().count(simP(), 'logs') === 0);
+
+simP().inv = [{ id: 'needle', qty: 1 }, { id: 'leather', qty: 6 }];
+guest.Net.craft('leather', 'leather_coif', 2);
+await sleep(500);
+check('leatherworking makes the item', sim2().count(simP(), 'leather_coif') === 2);
+check('crafting awarded xp', (simP().xp.crafting || 0) > 200000);
+
+// Without the tool, nothing is made — the client cannot assert its way past it.
+simP().inv = [{ id: 'uncut_sapphire', qty: 2 }];
+guest.Net.craft('gem', 'uncut_sapphire', 2);
+await sleep(400);
+check('crafting without the tool is refused', sim2().count(simP(), 'sapphire') === 0 && sim2().count(simP(), 'uncut_sapphire') === 2);
+
+// And the level gate holds.
+simP().xp = { hits: 1154 };
+simP().inv = [{ id: 'chisel', qty: 1 }, { id: 'uncut_diamond', qty: 1 }];
+guest.Net.craft('gem', 'uncut_diamond', 1);
+await sleep(400);
+check('crafting above your level is refused', sim2().count(simP(), 'diamond') === 0);
+
+// A batch is capped, so one message cannot ask for unbounded work.
+simP().xp = { hits: 1154, crafting: 200000 };
+simP().inv = [{ id: 'chisel', qty: 1 }, { id: 'uncut_sapphire', qty: 40 }];
+guest.Net.craft('gem', 'uncut_sapphire', 9999);
+await sleep(700);
+check('a batch request is capped', sim2().count(simP(), 'sapphire') <= 28,
+  'made ' + sim2().count(simP(), 'sapphire'));
 
 // --- quests: progress is per-player, and the sim polices every step ---
 simP().inv = [];

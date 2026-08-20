@@ -122,13 +122,20 @@ Shared and authoritative: **movement (walk and run), woodcutting, mining, fishin
 combat (melee + ranged, per-weapon and per-NPC attack speeds, the combat triangle,
 worn equipment across all six slots, arrow recovery, melee adjacency), monster AI and
 aggro, loot, death, banking (including tabs and bank notes), shops, smelting,
-smithing, cooking, firemaking, chat, emotes, ladders, dynamic events, and seeing
-other players.**
+smithing, cooking, firemaking, crafting, fletching, herblore, chat, emotes, ladders,
+dynamic events, and seeing other players.**
 
-Still singleplayer-only, and they say so when you try: crafting, fletching, herblore,
-farming, prayer, magic, and most quests. The remaining production skills all share
-one input path — *use item on item*, with their own batch menus — so they are a
-single coherent batch rather than six separate ones.
+Still singleplayer-only, and they say so when you try: farming, prayer, magic, and
+most quests.
+
+### Use item on item
+
+Crafting, fletching and herblore all reach the player the same way — combine two
+items — so they share **one** intent, `craft`, rather than nine. The client works out
+*which* recipe from the two items and, where there is a choice, shows the same menu it
+always has; the sim re-derives everything from the shared tables and re-checks the
+level, the tool and the materials. `qty` batches, so "make all" is one message rather
+than twenty-eight, and it is capped so a single request cannot ask for unbounded work.
 
 ### Quests
 
@@ -157,9 +164,11 @@ the same reason `combat.js` and `cookBurnChance()` are shared.
 and quests whose steps live in that table. Everything else still says so, because its
 dialogue mutates player state directly and the authority would never see it.
 
-Ported so far: **The Guide's Lunch**. The rest are blocked less by the framework than
-by their ingredients — The Cook's Feast needs farm produce, The Artisan's Apprentice
-needs a crafted leather coif, and both of those skills are still offline.
+Ported so far: **The Guide's Lunch** and **The Artisan's Apprentice**, both
+completable end to end. Steps proved by a running total rather than an item held —
+the Apprentice's "light 2 fires" — use a `counter` field checked against a tally the
+sim keeps, so the client never touches it. The rest are blocked on ingredients, not
+on the framework: the Cook's Feast needs farm produce, and farming is still offline.
 
 ### Production skills
 

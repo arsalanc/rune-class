@@ -307,6 +307,9 @@ const Net = {
     // Quest progress is per-character and owned by the authority; mirror it so the
     // client's dialogue asks the right questions and the Quest tab reads true.
     if (m.quests) { P.quests = Object.assign(Game.emptyQuests(), m.quests); UI.renderQuests(); }
+    // Counters the sim keeps that quest steps are proved against.
+    if (typeof m.firesLit === 'number') P.firesLit = m.firesLit;
+    if (typeof m.ratKills === 'number') P.ratKills = m.ratKills;
     UI.renderInventory(); UI.renderStats(); UI.renderEquipment();
   },
 
@@ -442,5 +445,9 @@ const Net = {
   firemake(id) { this.send({ t: 'firemake', id }); },
 
   // Only ever a request. The sim re-checks the step's requirements before it moves.
-  questStep(id) { this.send({ t: 'quest', id }); }
+  questStep(id) { this.send({ t: 'quest', id }); },
+
+  // One intent for every "use item on item" recipe. `qty` batches, so "make all"
+  // is one message rather than twenty-eight.
+  craft(kind, arg, qty) { this.send({ t: 'craft', kind, arg, qty: qty || 1 }); }
 };

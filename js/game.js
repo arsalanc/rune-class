@@ -1470,26 +1470,30 @@ const Game = {
     if (!a || !b) return;
     const ids = [a.id, b.id];
     const logId = ids.find(id => ITEMS[id].fmXp);
-    // Firemaking is the one combination the sim knows; the rest of the item-on-item
-    // recipes (fletching, crafting, herblore) are still singleplayer-only.
-    if (this.netMode) {
-      if (ids.includes('tinderbox') && logId) { this.selectedSlot = -1; Net.firemake(logId); UI.renderInventory(); return; }
-      this.msg('That is only available in singleplayer for now.', 'm-red');
-      this.selectedSlot = -1; UI.renderInventory();
-      return;
-    }
     const knifeLog = ids.includes('knife') && ids.find(id => FLETCH_KNIFE[id]);
-    // herb into a vial of water -> unfinished potion
-    const herbId = ids.find(id => HERB_BY_ID[id]);
-    if (ids.includes('vial_of_water') && herbId && UNF_BY_HERB[herbId]) return this.mixUnf(herbId);
-    // unfinished potion + its secondary -> the finished thing
-    const unfId = ids.find(id => POTION_BY_UNF[id]);
-    if (unfId) { const rec = POTION_BY_UNF[unfId].find(r => ids.includes(r.sec)); if (rec) return this.mixPotion(rec); }
-    // pestle and mortar grinds a secondary out of something
-    if (ids.includes('pestle')) { const g = ids.find(id => GRINDABLES[id]); if (g) return this.grindSecondary(g); }
+    const herbId = ids.find(id => HERB_BY_ID[id]);            // herb into a vial of water
+    const unfId = ids.find(id => POTION_BY_UNF[id]);          // unfinished potion + secondary
     const stringBow = ids.includes('bowstring') && ids.find(id => FLETCH_STRING[id]);
     const featherShaft = ids.includes('feather') && ids.includes('arrow_shafts');
     const headArrow = ids.find(id => FLETCH_ARROW[id]);
+
+    // Multiplayer: work out which recipe was asked for and send it. Has to come after
+    // every declaration above — reading a `const` before its initialiser is a
+    // temporal-dead-zone error, not an undefined. The menus netCombine opens are
+    // pure client-side pickers; the sim re-derives the recipe from the shared tables
+    // and re-checks the level and materials before making anything.
+    if (this.netMode) {
+      this.selectedSlot = -1;
+      const done = this.netCombine(ids, logId, knifeLog, stringBow, featherShaft, headArrow, herbId, unfId);
+      if (!done) this.msg('Nothing interesting happens.', 'm-game');
+      UI.renderInventory();
+      return;
+    }
+
+    if (ids.includes('vial_of_water') && herbId && UNF_BY_HERB[herbId]) return this.mixUnf(herbId);
+    if (unfId) { const rec = POTION_BY_UNF[unfId].find(r => ids.includes(r.sec)); if (rec) return this.mixPotion(rec); }
+    // pestle and mortar grinds a secondary out of something
+    if (ids.includes('pestle')) { const g = ids.find(id => GRINDABLES[id]); if (g) return this.grindSecondary(g); }
     if (ids.includes('tinderbox') && logId) this.lightFire(logId);
     else if (knifeLog) this.fletchMenu(knifeLog);
     else if (stringBow) this.stringBow(stringBow);
@@ -1498,6 +1502,56 @@ const Game = {
     else if (ids.includes('needle') && ids.includes('leather')) this.craftLeatherMenu();
     else if (ids.includes('chisel') && ids.find(id => GEM_CUTS[id])) this.cutGem(ids.find(id => GEM_CUTS[id]));
     else this.msg('Nothing interesting happens.', 'm-game');
+  },
+
+  // Multiplayer half of useItemOnItem: same recognition, but each branch sends an
+  // intent instead of mutating the pack. Returns false when nothing matched.
+  netCombine(ids, logId, knifeLog, stringBow, featherShaft, headArrow, herbId, unfId) {
+    if (ids.includes('tinderbox') && logId) { Net.firemake(logId); return true; }
+    if (ids.includes('vial_of_water') && herbId && UNF_BY_HERB[herbId]) {
+      Net.craft('unf', herbId, this.countItem(herbId)); return true;
+    }
+    if (unfId) {
+      const rec = POTION_BY_UNF[unfId].find(r => ids.includes(r.sec));
+      if (rec) { Net.craft('potion', { unf: unfId, sec: rec.sec }, this.countItem(unfId)); return true; }
+    }
+    if (ids.includes('pestle')) {
+      const g = ids.find(id => GRINDABLES[id]);
+      if (g) { Net.craft('grind', g, this.countItem(g)); return true; }
+    }
+    if (knifeLog) { this.netFletchMenu(knifeLog); return true; }
+    if (stringBow) { Net.craft('stringbow', stringBow, this.countItem(stringBow)); return true; }
+    if (featherShaft) { Net.craft('headless', null, 1); return true; }
+    if (headArrow && ids.includes('headless_arrows')) { Net.craft('arrows', headArrow, 1); return true; }
+    if (ids.includes('needle') && ids.includes('leather')) { this.netLeatherMenu(); return true; }
+    if (ids.includes('chisel')) {
+      const gem = ids.find(id => GEM_CUTS[id]);
+      if (gem) { Net.craft('gem', gem, this.countItem(gem)); return true; }
+    }
+    return false;
+  },
+
+  // The same pickers as singleplayer; only the callback differs.
+  netFletchMenu(logId) {
+    const opts = FLETCH_KNIFE[logId].map(r => ({
+      label: (r.qty > 1 ? r.qty + ' ' : '') + ITEMS[r.id].name + ' (lvl ' + r.lvl + ')',
+      cb: () => Net.craft('fletchlog', { log: logId, id: r.id }, this.countItem(logId))
+    }));
+    opts.push({ label: 'Cancel', cb: () => {} });
+    UI.showMenu(window.innerWidth / 2 - 100, window.innerHeight / 2 - 70, opts);
+  },
+  netLeatherMenu() {
+    const avail = CRAFTABLES.filter(r => this.level('crafting') >= r.lvl);
+    if (!avail.length) { this.msg('You need a higher Crafting level to work this leather.', 'm-red'); return; }
+    const opts = avail.map(r => ({
+      label: ITEMS[r.id].name + ' (lvl ' + r.lvl + ', ' +
+        [r.leather ? r.leather + ' leather' : null]
+          .concat(Object.entries(r.extra || {}).map(([id, q]) => q + ' ' + ITEMS[id].name.toLowerCase()))
+          .filter(Boolean).join(' + ') + ')',
+      cb: () => Net.craft('leather', r.id, this.canMake('leather', r) || 1)
+    }));
+    opts.push({ label: 'Cancel', cb: () => {} });
+    UI.showMenu(window.innerWidth / 2 - 120, window.innerHeight / 2 - 90, opts);
   },
 
   // A vial fills anywhere there is water to dip it in.
@@ -2225,7 +2279,7 @@ const Game = {
   // quest whose steps live in QUEST_STEPS and are therefore re-checked by the sim.
   // Everything else still says so, because its dialogue mutates player state
   // directly and the authority would never see it.
-  NET_TALK: ['guide', 'banker', 'instructor', 'townsman', 'townswoman', 'villager', 'bartender', 'innkeeper', 'farmer', 'farmhand', 'marshal'],
+  NET_TALK: ['guide', 'artisan', 'banker', 'instructor', 'townsman', 'townswoman', 'villager', 'bartender', 'innkeeper', 'farmer', 'farmhand', 'marshal'],
   netTalkTo(n) {
     const d = NPC_DEFS[n.type];
     if (!this.NET_TALK.includes(n.type)) return this.netTodo();
@@ -3177,7 +3231,7 @@ const Game = {
         ['Thessaly', "I'm Thessaly. I've mastered every trade worth knowing, and I could use an apprentice."],
         { who: 'Thessaly', text: "Learn the trades with me? I'll teach you each craft and reward every lesson.", choices: [
           { label: 'Yes — teach me the trades!', cb: () => {
-            q.apprentice = 1; if (!this.hasItem('needle')) this.addItem('needle', 1); UI.renderQuests();
+            this.questAdvance('apprentice');
             this.dialogue([
               ['Thessaly', "Splendid! Take this needle — you'll want it later for leatherwork."],
               ['Thessaly', 'First lesson: ' + STEPS[0].ask + '. Come back when it\'s done.'],
@@ -3193,12 +3247,11 @@ const Game = {
     const idx = q.apprentice - 1;
     if (idx >= STEPS.length) { this.dialogue([['Thessaly', "You've learned every lesson I can teach, and learned them well. Go make your fortune, artisan!"]]); return; }
     const step = STEPS[idx];
-    if (!step.proof()) { this.dialogue([['Thessaly', 'Not yet, apprentice. You still need to ' + step.ask + '.']]); return; }
-    step.take();
-    for (const sk in step.xp) this.addXp(sk, step.xp[sk]);
-    q.apprentice++; UI.renderQuests();
-    if (q.apprentice - 1 >= STEPS.length) {
-      this.addItem('coins', 300); if (!this.hasItem('needle')) this.addItem('needle', 1);
+    // The lesson text lives here; the materials, xp and stage all live in
+    // QUEST_STEPS, so the sim can check the same thing the dialogue just asked about.
+    if (!this.questReady('apprentice')) { this.dialogue([['Thessaly', 'Not yet, apprentice. You still need to ' + step.ask + '.']]); return; }
+    this.questAdvance('apprentice');
+    if (idx + 1 >= STEPS.length) {
       this.dialogue([
         ['Thessaly', step.praise],
         ['Thessaly', "And that's the last lesson! You've the hands of a real craftsman now."],
@@ -3210,7 +3263,9 @@ const Game = {
       this.dialogue([
         ['Thessaly', step.praise],
         ['Thessaly', 'Here — some hard-won experience for your trouble.'],
-        ['Thessaly', 'Next lesson: ' + STEPS[q.apprentice - 1].ask + '.']
+        // idx+1 rather than q.apprentice-1: in multiplayer the stage is advanced by
+        // the authority, so it has not come back yet when this line is built.
+        ['Thessaly', 'Next lesson: ' + STEPS[idx + 1].ask + '.']
       ]);
     }
   },
@@ -3429,6 +3484,7 @@ const Game = {
     const step = questStepFor(questId, stage);
     if (!step) return false;
     for (const [id, q] of Object.entries(step.needs || {})) if (this.countItem(id) < q) return false;
+    for (const [key, n] of Object.entries(step.counter || {})) if ((this.player[key] | 0) < n) return false;
     for (const [id, q] of Object.entries(step.needs || {})) this.removeItem(id, q);
     for (const [id, q] of Object.entries(step.give || {})) this.addItem(id, q);
     for (const [sk, amt] of Object.entries(step.xp || {})) this.addXp(sk, amt);
@@ -3440,7 +3496,8 @@ const Game = {
   questReady(questId) {
     const step = questStepFor(questId, this.player.quests[questId] | 0);
     if (!step) return false;
-    return Object.entries(step.needs || {}).every(([id, q]) => this.countItem(id) >= q);
+    return Object.entries(step.needs || {}).every(([id, q]) => this.countItem(id) >= q)
+        && Object.entries(step.counter || {}).every(([key, n]) => (this.player[key] | 0) >= n);
   },
 
   guideDialogue() {
