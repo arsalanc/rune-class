@@ -337,10 +337,9 @@ const Game = {
   togglePrayer(id) {
     const P = this.player, pr = PRAYERS.find(p => p.id === id);
     if (!pr) return;
-    // The sim does not model prayer, so switching one on here would drain points
-    // client-side and change nothing about the combat the server is resolving. Say
-    // so instead of letting the tab pretend it worked.
-    if (this.netMode) { this.msg('Prayer is singleplayer-only for now — it would have no effect in a shared world.', 'm-red'); return; }
+    // Multiplayer: the sim owns the points, the drain and the combat effect, so this
+    // is a request. The authority echoes prayersOn back and the book redraws.
+    if (this.netMode) { Net.pray(id, !P.prayersOn[id]); return; }
     if (P.prayersOn[id]) { delete P.prayersOn[id]; this._flicked[id] = true; }
     else {
       if (this.level('prayer') < pr.lvl) { this.msg('You need a Prayer level of ' + pr.lvl + ' to use ' + pr.name + '.', 'm-red'); return; }
@@ -1319,6 +1318,7 @@ const Game = {
       if (it.noted) this.msg('This is a bank note. Take it to a bank to reclaim the item.', 'm-game');
       else if (def.slot) Net.wield(i);
       else if (def.heal) Net.eat(i);
+      else if (def.bury) Net.bury(i);
       else this.msg(def.name + ' — right-click to drop. Crafting and questing are singleplayer-only for now.', 'm-game');
       return;
     }
@@ -1362,6 +1362,7 @@ const Game = {
       }
       if (def.slot) opts.push({ label: (def.slot === 'weapon' ? 'Wield ' : 'Wear ') + def.name, cb: () => Net.wield(i) });
       if (def.heal) opts.push({ label: 'Eat ' + def.name, cb: () => Net.eat(i) });
+      if (def.bury) opts.push({ label: 'Bury ' + def.name, cb: () => Net.bury(i) });
       opts.push({ label: 'Drop ' + def.name, cb: () => Net.drop(i) });
       opts.push({ label: 'Examine ' + def.name, cb: () => this.msg(def.examine, 'm-game') });
       opts.push({ label: 'Cancel', cb: () => {} });
@@ -3443,7 +3444,8 @@ const Game = {
       else if (s.type === 'furnace') opts.push({ label: 'Use ' + def.name, cb: () => this.smeltMenu(World.key(s.x, s.z), s) });
       else if (s.type === 'anvil') opts.push({ label: 'Use ' + def.name, cb: () => this.smithMenu(World.key(s.x, s.z), s) });
       else if (s.type === 'range' || s.type === 'fire') opts.push({ label: 'Cook-on ' + def.name, cb: () => this.netAction('cook', { s }) });
-      else if (s.type === 'altar') opts.push({ label: 'Use ' + def.name, cb: () => this.netTodo() });
+      else if (s.type === 'altar') opts.push({ label: 'Recharge at altar', cb: () => this.netAction('altar', { s }) });
+      if (s.type === 'shrine') opts.push({ label: 'Pray at shrine', cb: () => this.netAction('altar', { s }) });
       // Farming. patchState() reads the mirrored patches, so these say the same
       // thing they do offline; the sim re-checks state, level and tool.
       if (s.type === 'wheat') opts.push({ label: 'Pick wheat', cb: () => this.netAction('wheat', { s }) });

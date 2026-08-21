@@ -787,11 +787,6 @@ const UI = {
     const P = Game.player, maxH = Game.level('hits');
     this.els.hpFill.style.width = Math.max(0, P.curHits / maxH * 100) + '%';
     this.els.hpTxt.textContent = P.curHits + '/' + maxH;
-    // The sim has no concept of prayer, so in multiplayer this bar would be showing
-    // a purely local number that affects nothing. Hide it rather than lie.
-    const prayRow = this.els.prayFill.closest('.hud-row');
-    if (prayRow) prayRow.classList.toggle('hidden', !!Game.netMode);
-    if (Game.netMode) return;
     const maxP = Game.level('prayer');
     this.els.prayFill.style.width = (maxP ? Math.floor(P.curPrayer) / maxP * 100 : 0) + '%';
     this.els.prayTxt.textContent = Math.floor(P.curPrayer) + '/' + maxP;

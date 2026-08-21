@@ -122,11 +122,28 @@ Shared and authoritative: **movement (walk and run), woodcutting, mining, fishin
 combat (melee + ranged, per-weapon and per-NPC attack speeds, the combat triangle,
 worn equipment across all six slots, arrow recovery, melee adjacency), monster AI and
 aggro, loot, death, banking (including tabs and bank notes), shops, smelting,
-smithing, cooking, firemaking, crafting, fletching, herblore, farming, chat, emotes,
-ladders, dynamic events, and seeing other players.**
+smithing, cooking, firemaking, crafting, fletching, herblore, farming, prayer, chat,
+emotes, ladders, dynamic events, and seeing other players.**
 
-Still singleplayer-only, and they say so when you try: prayer, magic, and most
-quests.
+Still singleplayer-only, and they say so when you try: magic, and most quests.
+
+### Prayer
+
+The thing that makes prayer real rather than decorative is that the sim's combat
+rolls use `effLevel()` — base level plus whatever prayers are lit — instead of
+`level()`. A prayer that does not change a damage roll is just an animation. The same
+goes for protection prayers, which zero an incoming hit in the NPC damage path.
+
+Points, drain and the combat effect all live on the authority; the client only asks
+to toggle. Drain runs on the 600ms game tick and reproduces singleplayer's
+**flicking**: a prayer switched off during a tick is not charged for it, so perfect
+flicking is free and costs a click every 600ms — which is the point of the mechanic.
+Running out switches everything off and says so. Prayers always come back off after a
+disconnect: the points carry over, but nothing should still be burning from a session
+that ended who knows when.
+
+This one also fixed a latent bug: the sim's `equipBonus()` had no `pray` field, so
+`prayDrainResist()` was `NaN` and prayer would have drained *never*.
 
 ### Farming
 

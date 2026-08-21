@@ -220,7 +220,8 @@ class Sim {
       xp: { hits: 1154 }, curHits: 10, style: 2,
       inv: [{ id: 'bronze_axe', qty: 1 }, { id: 'bronze_pickaxe', qty: 1 }, { id: 'tinderbox', qty: 1 }, { id: 'net', qty: 1 }],
       worn: this.emptyWorn(), nextAtkTick: 0, run: false, bank: [],
-      quests: {}, firesLit: 0, ratKills: 0, patches: {}
+      quests: {}, firesLit: 0, ratKills: 0, patches: {},
+      curPrayer: 1, prayersOn: {}, prayCounter: 0
     };
   }
 
@@ -240,6 +241,10 @@ class Sim {
     // allotment on the same tile. Shared patches would mean whoever walked past
     // first could harvest your crop, which is not a thing to do to a friend.
     p.patches = (d.patches && typeof d.patches === 'object') ? Object.assign({}, d.patches) : {};
+    // Prayers always come back switched off — points carry over, but nothing should
+    // still be burning from a session that ended who knows when.
+    p.curPrayer = typeof d.curPrayer === 'number' ? d.curPrayer : 1;
+    p.prayersOn = {}; p.prayCounter = 0;
     // Sanitise on load: a save is written by the host's own storage, but a corrupt or
     // hand-edited one should not be able to conjure items that do not exist.
     p.bank = Array.isArray(d.bank)
@@ -256,10 +261,75 @@ class Sim {
 
   toSave(p) {
     return { xp: p.xp, curHits: p.curHits, inv: p.inv, worn: p.worn, x: p.x, z: p.z, layer: p.layer, style: p.style, run: !!p.run, bank: p.bank || [],
-             quests: p.quests || {}, firesLit: p.firesLit | 0, ratKills: p.ratKills | 0, patches: p.patches || {} };
+             quests: p.quests || {}, firesLit: p.firesLit | 0, ratKills: p.ratKills | 0, patches: p.patches || {},
+             curPrayer: p.curPrayer | 0 };
   }
 
   level(p, sk) { return levelForXp(p.xp[sk] || 0); }
+
+  // ---------- prayer ----------
+  // Effective level: base plus whatever prayers are up. The combat rolls below use
+  // this rather than level(), which is the entire point of the skill — a prayer that
+  // does not change a damage roll is just an animation.
+  effLevel(p, sk) {
+    let lvl = this.level(p, sk);
+    const on = p.prayersOn || {};
+    for (const pr of PRAYERS)
+      if (on[pr.id] && pr.boost === sk) lvl += Math.max(1, Math.floor(lvl * pr.pct / 100));
+    return lvl;
+  }
+  protectedFrom(p, style) {
+    const on = p.prayersOn || {};
+    for (const pr of PRAYERS) if (pr.protect === style && on[pr.id]) return true;
+    return false;
+  }
+  prayDrainResist(p) { return 60 + 2 * this.equipBonus(p).pray; }
+
+  // One game tick of drain. `_flicked` reproduces singleplayer's flicking: a prayer
+  // switched off during the tick does not charge for it, so perfect flicking is free
+  // — costing a click every 600ms, which is the point.
+  tickPrayer(p) {
+    if (!p.prayersOn) p.prayersOn = {};
+    let drain = 0;
+    for (const pr of PRAYERS) if (p.prayersOn[pr.id] && !(p._flicked && p._flicked[pr.id])) drain += pr.drain;
+    p._flicked = {};
+    if (!drain) return;
+    const before = p.curPrayer;
+    const resist = this.prayDrainResist(p);
+    p.prayCounter = (p.prayCounter || 0) + drain;
+    while (p.prayCounter >= resist && p.curPrayer > 0) { p.prayCounter -= resist; p.curPrayer--; }
+    if (p.curPrayer <= 0) {
+      p.curPrayer = 0; p.prayersOn = {}; p.prayCounter = 0;
+      this.toPlayer(p, 'You have run out of prayer points. You can recharge at an altar.', 'm-red');
+      this.pushStats(p);
+    } else if (p.curPrayer !== before) this.pushStats(p);
+  }
+
+  intentPrayer(p, id, on) {
+    const pr = PRAYERS.find(x => x.id === id);
+    if (!pr) return;
+    if (!p.prayersOn) p.prayersOn = {};
+    if (!on) {
+      if (p.prayersOn[id]) { delete p.prayersOn[id]; (p._flicked = p._flicked || {})[id] = true; }
+    } else {
+      if (this.level(p, 'prayer') < pr.lvl) { this.toPlayer(p, 'You need a Prayer level of ' + pr.lvl + ' to use ' + pr.name + '.', 'm-red'); return; }
+      if (p.curPrayer <= 0) { this.toPlayer(p, 'You need to recharge your prayer at an altar.', 'm-red'); return; }
+      // rival prayers in the same group switch off, the way the prayer book works
+      for (const o of PRAYERS)
+        if (o.group === pr.group && o.id !== id && p.prayersOn[o.id]) { delete p.prayersOn[o.id]; (p._flicked = p._flicked || {})[o.id] = true; }
+      p.prayersOn[id] = true;
+    }
+    this.pushStats(p);
+  }
+
+  intentBury(p, index) {
+    const it = p.inv[index | 0];
+    if (!it || it.noted || !ITEMS[it.id] || !ITEMS[it.id].bury) return;
+    p.inv.splice(index | 0, 1);
+    this.addXp(p, 'prayer', ITEMS[it.id].prayerXp || 3.75);
+    this.toPlayer(p, 'You dig a hole and bury the ' + ITEMS[it.id].name.toLowerCase() + '.', 'm-game');
+    this.pushStats(p);
+  }
   maxHits(p) { return this.level(p, 'hits'); }
   // same formula as Game.combatLevel, so event scaling matches singleplayer exactly
   combatLevel(p) {
@@ -278,7 +348,8 @@ class Sim {
     this.pushStats(p);
   }
 
-  pushStats(p) { this.emit({ kind: 'to', id: p.id, msg: { t: 'you', xp: p.xp, curHits: p.curHits, maxHits: this.maxHits(p), inv: p.inv, worn: p.worn, style: p.style, run: !!p.run, quests: p.quests || {}, firesLit: p.firesLit | 0, ratKills: p.ratKills | 0, patches: p.patches || {} } }); }
+  pushStats(p) { this.emit({ kind: 'to', id: p.id, msg: { t: 'you', xp: p.xp, curHits: p.curHits, maxHits: this.maxHits(p), inv: p.inv, worn: p.worn, style: p.style, run: !!p.run, quests: p.quests || {}, firesLit: p.firesLit | 0, ratKills: p.ratKills | 0, patches: p.patches || {},
+    curPrayer: p.curPrayer | 0, prayersOn: p.prayersOn || {} } }); }
   toPlayer(p, text, cls) { this.emit({ kind: 'to', id: p.id, msg: { t: 'msg', text, cls: cls || 'm-game' } }); }
 
   // ---------- inventory ----------
@@ -775,6 +846,7 @@ class Sim {
         for (const st of shop) { const d = Math.sign(st.initial - st.qty); if (d) { st.qty += d; moved.add(sid); } }
       for (const sid of moved) this.pushShopToViewers(sid);
     }
+    for (const p of this.players.values()) this.tickPrayer(p);
     Events.tick(this.eventCtx);
     // scenery respawns / fire expiry
     for (let l = 0; l < 2; l++) {
@@ -825,13 +897,15 @@ class Sim {
   // ---- worn equipment (mirrors singleplayer's player.worn slot-map) ----
   equippedIn(p, slot) { return (p.worn && p.worn[slot]) || null; }
   equipBonus(p) {
-    let aim = 0, power = 0, armour = 0, mAim = 0, rAim = 0, rPow = 0;
+    // `pray` matters as much as the rest: prayDrainResist() divides by it, so leaving
+    // it out made the resist NaN and prayer never drained at all.
+    let aim = 0, power = 0, armour = 0, mAim = 0, rAim = 0, rPow = 0, pray = 0;
     for (const slot in (p.worn || {})) {
       const it = p.worn[slot]; if (!it) continue; const d = ITEMS[it.id];
       aim += d.aim || 0; power += d.power || 0; armour += d.armour || 0; mAim += d.mAim || 0;
-      rAim += d.rAim || 0; rPow += d.rPow || 0;
+      rAim += d.rAim || 0; rPow += d.rPow || 0; pray += d.pray || 0;
     }
-    return { aim, power, armour, mAim, rAim, rPow };
+    return { aim, power, armour, mAim, rAim, rPow, pray };
   }
   playerArmourClass(p) {
     const b = this.equippedIn(p, 'body'), h = this.equippedIn(p, 'head'), lg = this.equippedIn(p, 'legs');
@@ -919,6 +993,7 @@ class Sim {
       // Production actions repeat every slow tick until the materials run out, the
       // same way singleplayer keeps P.action set — so one click smelts a whole
       // inventory. Each one clears p.action itself when it cannot continue.
+      case 'altar': return this.doAltar(p, a);
       case 'rake': return this.doRake(p, a);
       case 'plant': return this.doPlant(p, a);
       case 'harvest': return this.doHarvest(p, a);
@@ -949,6 +1024,16 @@ class Sim {
       }
       default: p.action = null;
     }
+  }
+
+  doAltar(p, a) {
+    p.action = null;
+    if (a._s.type !== 'altar' && a._s.type !== 'shrine') return;
+    const max = this.level(p, 'prayer');
+    if (p.curPrayer >= max) { this.toPlayer(p, 'You kneel a moment. Your spirit is already steady.', 'm-game'); return; }
+    p.curPrayer = max; p.prayCounter = 0;
+    this.toPlayer(p, 'You kneel at the altar. Your prayer is restored.', 'm-game');
+    this.pushStats(p);
   }
 
   // ---------- farming ----------
@@ -1239,12 +1324,12 @@ class Sim {
       const save = this.arrowSave(p);
       if (!(save > 0 && Math.random() < save)) this.remove(p, arrow, 1);
       const t = Combat.triMult('ranged', d.carmour);
-      dmg = this.rollHit((this.level(p, 'ranged') + 4 + eq.rAim) * t, ((ITEMS[arrow].power || 2) + 2 + eq.rPow) * Combat.triPow(t), d.def);
+      dmg = this.rollHit((this.effLevel(p, 'ranged') + 4 + eq.rAim) * t, ((ITEMS[arrow].power || 2) + 2 + eq.rPow) * Combat.triPow(t), d.def);
       if (dmg > 0) { this.addXp(p, 'ranged', dmg * 4); this.addXp(p, 'hits', dmg * 1.33); }
       this.pushStats(p);                               // arrow count changed
     } else {                                           // melee
       const t = Combat.triMult('melee', d.carmour);
-      dmg = this.rollHit((this.level(p, 'attack') + eq.aim) * t, (this.level(p, 'strength') + eq.power) * Combat.triPow(t), d.def);
+      dmg = this.rollHit((this.effLevel(p, 'attack') + eq.aim) * t, (this.effLevel(p, 'strength') + eq.power) * Combat.triPow(t), d.def);
       if (dmg > 0) {
         const style = p.style;
         if (style === 0) for (const sk of ['attack', 'strength', 'defense']) this.addXp(p, sk, dmg * 1.33);
@@ -1364,7 +1449,9 @@ class Sim {
             n.swingKind = canBreathe ? 'ranged' : (d.cstyle === 'magic' ? 'magic' : 'melee');
             const eq = this.equipBonus(target);
             const t = Combat.triMult(d.cstyle || 'melee', this.playerArmourClass(target)); // its style vs your armour
-            const dmg = this.rollHit(d.att * t, d.str, this.level(target, 'defense') + eq.armour);
+            let dmg = this.rollHit(d.att * t, d.str, this.effLevel(target, 'defense') + eq.armour);
+            // A protection prayer that is up turns the blow aside entirely.
+            if (dmg > 0 && this.protectedFrom(target, d.cstyle || 'melee')) dmg = 0;
             target.splat = { v: dmg, until: now + 800 }; target.showHp = now + 5000; n.showHp = now + 5000;
             if (canBreathe) this.toPlayer(target, 'The dragon breathes fire at you!', 'm-red');
             if (dmg > 0) {

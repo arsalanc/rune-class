@@ -323,6 +323,8 @@ const Host = {
       case 'firemake': this.sim.intentFiremake(p, String(m.id || '')); break;
       case 'quest': this.sim.intentQuestStep(p, String(m.id || '')); break;
       case 'craft': this.sim.intentCraft(p, String(m.kind || ''), m.arg, m.qty | 0); break;
+      case 'pray': this.sim.intentPrayer(p, String(m.id || ''), !!m.on); break;
+      case 'bury': this.sim.intentBury(p, m.i | 0); break;
     }
     this._flush();
   },

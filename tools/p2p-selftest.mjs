@@ -535,6 +535,49 @@ if (mill) {
   check('the windmill grinds wheat into flour', sim2().count(simP(), 'flour') === 1);
 }
 
+// --- prayer ---
+simP().xp = { hits: 1154, prayer: 200000, strength: 200000 };
+simP().curPrayer = sim2().level(simP(), 'prayer');
+simP().prayersOn = {};
+const baseStr = sim2().level(simP(), 'strength');
+
+guest.Net.pray('burst_strength', true);
+await sleep(400);
+check('a prayer can be switched on', !!simP().prayersOn.burst_strength);
+check('it raises the effective level used in combat', sim2().effLevel(simP(), 'strength') > baseStr,
+  baseStr + ' -> ' + sim2().effLevel(simP(), 'strength'));
+check('the guest sees which prayers are lit', !!(guest.Game.player.prayersOn || {}).burst_strength);
+
+// A prayer above your level is refused by the authority, not just greyed out.
+simP().xp = { hits: 1154 };
+guest.Net.pray('protect_melee', true);
+await sleep(400);
+check('a prayer above your level is refused', !simP().prayersOn.protect_melee);
+
+// Points drain while a prayer is lit, and an altar refills them.
+simP().xp = { hits: 1154, prayer: 200000 };
+simP().curPrayer = 40; simP().prayCounter = 0; simP().prayersOn = { burst_strength: true }; simP()._flicked = {};
+for (let i = 0; i < 400; i++) sim2().tickPrayer(simP());
+check('prayer points drain while lit', simP().curPrayer < 40, 'now ' + simP().curPrayer);
+
+const altar = scenery('altar') || scenery('shrine');
+if (altar) {
+  simP().curPrayer = 1;
+  standBy(altar.s);
+  guest.Net.action({ kind: 'altar', key: altar.key });
+  await sleep(1400);
+  check('an altar restores prayer to full', simP().curPrayer === sim2().level(simP(), 'prayer'),
+    'now ' + simP().curPrayer);
+}
+
+// Burying bones is worth prayer xp, and the sim does the awarding.
+simP().xp = { hits: 1154 };
+simP().inv = [{ id: 'bones', qty: 1 }];
+guest.Net.bury(0);
+await sleep(400);
+check('burying bones awards prayer xp', (simP().xp.prayer || 0) > 0);
+check('and consumes the bones', sim2().count(simP(), 'bones') === 0);
+
 // --- quests: progress is per-player, and the sim polices every step ---
 simP().inv = [];
 simP().quests = {};

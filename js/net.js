@@ -314,6 +314,9 @@ const Net = {
     // the existing patch rendering and option menus read true — growth is wall-clock,
     // so the client can work out ripeness itself from plantedAt.
     if (m.patches) P.patches = m.patches;
+    // Prayer: the authority owns the points, the drain and the combat effect.
+    if (typeof m.curPrayer === 'number') P.curPrayer = m.curPrayer;
+    if (m.prayersOn) { P.prayersOn = m.prayersOn; UI.renderPrayers(); }
     UI.renderInventory(); UI.renderStats(); UI.renderEquipment();
   },
 
@@ -453,5 +456,9 @@ const Net = {
 
   // One intent for every "use item on item" recipe. `qty` batches, so "make all"
   // is one message rather than twenty-eight.
-  craft(kind, arg, qty) { this.send({ t: 'craft', kind, arg, qty: qty || 1 }); }
+  craft(kind, arg, qty) { this.send({ t: 'craft', kind, arg, qty: qty || 1 }); },
+
+  // Prayer. The authority owns the points and the drain, so these are requests too.
+  pray(id, on) { this.send({ t: 'pray', id, on: !!on }); },
+  bury(i) { this.send({ t: 'bury', i }); }
 };

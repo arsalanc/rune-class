@@ -79,6 +79,8 @@ wss.on('connection', (ws) => {
       case 'firemake': sim.intentFiremake(p, String(m.id || '')); break;
       case 'quest': sim.intentQuestStep(p, String(m.id || '')); break;
       case 'craft': sim.intentCraft(p, String(m.kind || ''), m.arg, m.qty | 0); break;
+      case 'pray': sim.intentPrayer(p, String(m.id || ''), !!m.on); break;
+      case 'bury': sim.intentBury(p, m.i | 0); break;
     }
   });
 

@@ -197,14 +197,25 @@ await sleep(1200);
 check('the sim accepted the run toggle', await host.evaluate(`[...Host.sim.players.values()].some(p => p.run === true)`));
 check('the HUD button reflects it', await guest.evaluate(`document.getElementById('hud-run').textContent === 'Run'`));
 
-check('prayer refuses instead of pretending to work', await guest.evaluate(`(() => {
-  Game.player.prayersOn = {};
-  Game.togglePrayer(PRAYERS[0].id);
-  return Object.keys(Game.player.prayersOn).length === 0;
-})()`));
-check('the meaningless prayer bar is hidden', await guest.evaluate(`(() => {
+// Prayer is authoritative now: the tab is a real control, so it should light a
+// prayer on the host rather than refuse or pretend.
+await host.evaluate(`(() => {
+  const p = [...Host.clients.values()].filter(c => !c.local).map(c => Host.sim.players.get(c.pid))[0];
+  p.xp = { hits: 1154, prayer: 200000 };
+  p.curPrayer = Host.sim.level(p, 'prayer');
+  p.prayersOn = {};
+  Host.sim.pushStats(p);
+})()`);
+await sleep(1000);
+await guest.evaluate(`Game.togglePrayer('thick_skin')`);
+await sleep(1200);
+check('the prayer tab lights a prayer on the authority',
+  await host.evaluate(`[...Host.clients.values()].filter(c => !c.local).some(c => !!Host.sim.players.get(c.pid).prayersOn.thick_skin)`));
+check('and the guest sees it lit', await guest.evaluate(`!!(Game.player.prayersOn || {}).thick_skin`));
+check('the prayer bar is shown again, with real numbers', await guest.evaluate(`(() => {
   UI.updateHud();
-  return document.getElementById('hud-pray-fill').closest('.hud-row').classList.contains('hidden');
+  const row = document.getElementById('hud-pray-fill').closest('.hud-row');
+  return !row.classList.contains('hidden') && /\\d+\\/\\d+/.test(document.getElementById('hud-pray-txt').textContent);
 })()`));
 
 // ---------- banking, driven through the real UI ----------
@@ -276,15 +287,24 @@ const trader = JSON.parse(await host.evaluate(`(() => {
   return JSON.stringify({ id: n.id, shop: NPC_DEFS[n.type].trade });
 })()`));
 check('found a shopkeeper', !!trader);
-await sleep(1000);
 
+// Shopkeepers wander and the sim re-checks range on every transaction, so step back
+// onto the keeper's *current* tile before each operation rather than once at the top.
+const standAtTrader = () => host.evaluate(`(() => {
+  const n = Host.sim.npcs.find(n => n.id === ${trader.id});
+  const p = [...Host.clients.values()].filter(c => !c.local).map(c => Host.sim.players.get(c.pid))[0];
+  p.x = n.x + 0.5; p.z = n.z + 0.5; p.layer = n.layer; p.path = []; p.action = null;
+})()`);
+
+await standAtTrader();
 await guest.evaluate(`Net.shopOpen(${trader.id})`);
-await sleep(1500);
+await sleep(1200);
 check('the shop window opened on the guest', await guest.evaluate(`UI.modal === 'shop'`));
 check('it is showing the shared stock', await guest.evaluate(`Array.isArray(Game.shops[${JSON.stringify(trader.shop)}])`));
 
 const firstItem = await guest.evaluate(`(Game.shops[${JSON.stringify(trader.shop)}].find(s => s.qty > 0) || {}).id`);
 const stockBefore = await host.evaluate(`(Host.sim.shops[${JSON.stringify(trader.shop)}].find(s => s.id === ${JSON.stringify(firstItem)}) || {}).qty`);
+await standAtTrader();
 await guest.evaluate(`Game.buy(${JSON.stringify(firstItem)}, 1)`);
 await sleep(1200);
 check('buying through the UI takes stock off the shared shelf',
