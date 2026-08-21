@@ -122,10 +122,28 @@ Shared and authoritative: **movement (walk and run), woodcutting, mining, fishin
 combat (melee + ranged, per-weapon and per-NPC attack speeds, the combat triangle,
 worn equipment across all six slots, arrow recovery, melee adjacency), monster AI and
 aggro, loot, death, banking (including tabs and bank notes), shops, smelting,
-smithing, cooking, firemaking, crafting, fletching, herblore, farming, prayer, chat,
-emotes, ladders, dynamic events, and seeing other players.**
+smithing, cooking, firemaking, crafting, fletching, herblore, farming, prayer, magic,
+chat, emotes, ladders, dynamic events, and seeing other players.**
 
-Still singleplayer-only, and they say so when you try: magic, and most quests.
+**Every skill is now online.** What remains singleplayer-only is most of the quests,
+and they say so when you try.
+
+### Magic
+
+Combat casts ride on the ordinary attack action with a `spellId`, or on an autocast
+set in the spellbook — a spell replaces the swing entirely, at a fixed 5-tick cast
+speed and a 5-tile reach, like a bow. Out of runes or under-levelled, the sim stops
+the action rather than letting you lunge into melee with a staff.
+
+The interesting half is **curses**. Sap lives on the *shared* NPC, not on the caster,
+so one player's Confuse weakens that monster for everyone hitting it — which is the
+whole reason to cast it in a group. That only works because every damage roll now
+reads `npcStat(n, 'def')` instead of the static `NPC_DEFS` value; melee and ranged
+were still reading the raw stat, so a curse would have helped nobody but the mage.
+
+Enchanting and alchemy are per-player and go through their own intent. Alchemy's
+"are you sure?" prompt for a valuable item stays on the client — it is a confirmation,
+not a rule, and the sim re-checks the value either way.
 
 ### Prayer
 

@@ -248,6 +248,7 @@ const Host = {
       else if (e.kind === 'chat') this.broadcast({ t: 'chat', id: e.id, name: e.name, text: e.text });
       else if (e.kind === 'announce') this.broadcast({ t: 'msg', text: e.text, cls: e.cls });
       else if (e.kind === 'emote') this.broadcast({ t: 'emote', id: e.id, emote: e.emote });
+      else if (e.kind === 'cast') this.broadcast({ t: 'cast', from: e.from, x: e.x, z: e.z, tx: e.tx, tz: e.tz, layer: e.layer, curse: !!e.curse });
       else if (e.kind === 'join') this.broadcast({ t: 'online', id: e.id, name: e.name, join: true }, e.id);
       else if (e.kind === 'leave') this.broadcast({ t: 'online', id: e.id, name: e.name, join: false });
     }
@@ -325,6 +326,8 @@ const Host = {
       case 'craft': this.sim.intentCraft(p, String(m.kind || ''), m.arg, m.qty | 0); break;
       case 'pray': this.sim.intentPrayer(p, String(m.id || ''), !!m.on); break;
       case 'bury': this.sim.intentBury(p, m.i | 0); break;
+      case 'autocast': this.sim.intentAutocast(p, m.id ? String(m.id) : null); break;
+      case 'castitem': this.sim.intentCastOnItem(p, String(m.id || ''), m.i | 0); break;
     }
     this._flush();
   },

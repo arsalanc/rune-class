@@ -858,6 +858,8 @@ const Game = {
   castOnItem(spellId, slot) {
     const P = this.player, sp = SPELLS.find(s => s.id === spellId), it = P.inv[slot];
     if (!sp || !it) return false;
+    // Multiplayer: the sim spends the runes and makes the item, so this is a request.
+    if (this.netMode) { Net.castItem(spellId, slot); this.selectedSpell = null; UI.renderMagic(); return true; }
     if (this.level('magic') < sp.lvl) { this.msg('Your Magic level is not high enough for this spell.', 'm-red'); return false; }
     const def = ITEMS[it.id];
     let done = false;
@@ -3473,6 +3475,11 @@ const Game = {
           lvlCol: this.combatColor(lvl),
           cb: () => this.netAction('attack', { n })
         });
+        // A spell readied in the book becomes its own option, exactly as offline.
+        const sel = this.selectedSpell ? SPELLS.find(s => s.id === this.selectedSpell) : null;
+        if (sel && (sel.kind === 'combat' || sel.kind === 'curse'))
+          opts.unshift({ label: 'Cast ' + sel.name + ' on ' + d.name,
+                         cb: () => { this.netAction('attack', { n }, { spellId: sel.id }); this.selectedSpell = null; UI.renderMagic(); } });
       } else opts.push({ label: 'Talk-to ' + d.name, cb: () => this.netTalkTo(n) });
       // Ghostly traders stay shut online — they are gated behind quest progress the
       // sim does not model, so opening them would hand out a quest reward for free.

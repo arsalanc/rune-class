@@ -903,8 +903,10 @@ const UI = {
             this.renderMagic();
             if (!sel) this.addMessage('You ready ' + sp.name + '. ' + this.spellTargetHint(sp), 'm-quest');
           } else if (sp.kind === 'combat') {
-            Game.player.autocast = isAuto ? null : sp.id;
-            if (Game.player.autocast) Game.selectedSpell = null;
+            // The sim owns autocast in multiplayer — it decides what a swing becomes.
+            if (Game.netMode) Net.autocast(isAuto ? null : sp.id);
+            else Game.player.autocast = isAuto ? null : sp.id;
+            if (!isAuto) Game.selectedSpell = null;
             this.renderMagic();
             this.addMessage(isAuto ? 'Auto-cast disabled.' : 'Auto-cast set to ' + sp.name + '. Attacking a monster now casts it.', 'm-quest');
           }

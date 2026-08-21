@@ -105,14 +105,14 @@ function makeRealm(tag) {
   // Stand-ins for the parts of the client net.js talks to.
   vm.runInContext(`
     var Sound = { ensure() {}, play() {} };
-    var Game = { player: {}, players: [], npcs: [], ground: [], netMode: false, eventHud: [], run: false,
+    var Game = { player: {}, players: [], npcs: [], ground: [], projectiles: [], netMode: false, eventHud: [], run: false,
                  shops: {}, activeShop: 'general',
                  emptyQuests() { return {}; } };
     var UI = {
       modal: null,
       addMessage(t, c) { __messages.push({ t, c }); },
       refresh() {}, renderInventory() {}, renderStats() {}, renderEquipment() {},
-      renderEventBanner() {}, syncRunButton() {}, renderQuests() {},
+      renderEventBanner() {}, syncRunButton() {}, renderQuests() {}, renderPrayers() {}, renderMagic() {},
       openBank() { this.modal = 'bank'; }, renderBank() {}, closeModal() { this.modal = null; },
       openShop(id) { this.modal = 'shop'; }, renderShop() {}
     };
@@ -577,6 +577,61 @@ guest.Net.bury(0);
 await sleep(400);
 check('burying bones awards prayer xp', (simP().xp.prayer || 0) > 0);
 check('and consumes the bones', sim2().count(simP(), 'bones') === 0);
+
+// --- magic ---
+const mob = host.Host.sim.npcs.find(n => host.NPC_DEFS[n.type].attackable && n.layer === 0);
+check('the world has something to cast at', !!mob);
+const standOnMob = () => { const p = simP(); p.x = mob.x + 0.5; p.z = mob.z + 0.5; p.layer = mob.layer; p.path = []; p.action = null; };
+
+simP().xp = { hits: 1154, magic: 200000 };
+simP().inv = [];
+standOnMob();
+guest.Net.action({ kind: 'attack', npcId: mob.id, spellId: 'wind_strike' });
+await sleep(1400);
+check('casting with no runes does not hurt anything', mob.hits === mob.maxHits, 'hits=' + mob.hits);
+
+simP().inv = [{ id: 'air_rune', qty: 20 }, { id: 'mind_rune', qty: 20 }];
+standOnMob();
+guest.Net.action({ kind: 'attack', npcId: mob.id, spellId: 'wind_strike' });
+await sleep(1600);
+check('casting spends runes', sim2().count(simP(), 'air_rune') < 20,
+  'air runes left ' + sim2().count(simP(), 'air_rune'));
+check('casting awards magic xp', (simP().xp.magic || 0) > 200000);
+
+// A curse saps the *shared* NPC, so it helps everyone fighting it.
+const attBefore = host.NPC_DEFS[mob.type].att;
+simP().inv = [{ id: 'earth_rune', qty: 20 }, { id: 'water_rune', qty: 20 }, { id: 'body_rune', qty: 20 }];
+mob.sap = null;
+standOnMob();
+guest.Net.action({ kind: 'attack', npcId: mob.id, spellId: 'confuse' });
+await sleep(1600);
+check('a curse saps the shared monster', sim2().npcStat(mob, 'att') < attBefore,
+  attBefore + ' -> ' + sim2().npcStat(mob, 'att'));
+
+// Spell above your level: refused by the authority, not merely greyed out.
+simP().xp = { hits: 1154 };
+simP().inv = [{ id: 'air_rune', qty: 20 }, { id: 'chaos_rune', qty: 20 }];
+const hitsBefore = mob.hits;
+standOnMob();
+guest.Net.action({ kind: 'attack', npcId: mob.id, spellId: 'wind_bolt' });
+await sleep(1400);
+check('a spell above your level is refused', mob.hits === hitsBefore);
+
+// Alchemy and autocast
+simP().xp = { hits: 1154, magic: 200000 };
+simP().inv = [{ id: 'fire_rune', qty: 10 }, { id: 'nature_rune', qty: 10 }, { id: 'bronze_sword', qty: 1 }];
+guest.Net.castItem('low_alch', 2);
+await sleep(500);
+check('alchemy turns an item into coins', sim2().count(simP(), 'coins') > 0);
+check('and consumes the item', sim2().count(simP(), 'bronze_sword') === 0);
+
+guest.Net.autocast('wind_strike');
+await sleep(400);
+check('autocast is set on the authority', simP().autocast === 'wind_strike');
+check('the guest sees its autocast', guest.Game.player.autocast === 'wind_strike');
+guest.Net.autocast(null);
+await sleep(400);
+check('autocast can be cleared', !simP().autocast);
 
 // --- quests: progress is per-player, and the sim polices every step ---
 simP().inv = [];

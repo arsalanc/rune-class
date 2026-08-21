@@ -81,6 +81,8 @@ wss.on('connection', (ws) => {
       case 'craft': sim.intentCraft(p, String(m.kind || ''), m.arg, m.qty | 0); break;
       case 'pray': sim.intentPrayer(p, String(m.id || ''), !!m.on); break;
       case 'bury': sim.intentBury(p, m.i | 0); break;
+      case 'autocast': sim.intentAutocast(p, m.id ? String(m.id) : null); break;
+      case 'castitem': sim.intentCastOnItem(p, String(m.id || ''), m.i | 0); break;
     }
   });
 
@@ -108,6 +110,7 @@ function flushEvents() {
     else if (e.kind === 'chat') broadcast({ t: 'chat', id: e.id, name: e.name, text: e.text });
     else if (e.kind === 'announce') broadcast({ t: 'msg', text: e.text, cls: e.cls });
     else if (e.kind === 'emote') broadcast({ t: 'emote', id: e.id, emote: e.emote });
+    else if (e.kind === 'cast') broadcast({ t: 'cast', from: e.from, x: e.x, z: e.z, tx: e.tx, tz: e.tz, layer: e.layer, curse: !!e.curse });
     else if (e.kind === 'join') broadcast({ t: 'online', id: e.id, name: e.name, join: true }, e.id);
     else if (e.kind === 'leave') broadcast({ t: 'online', id: e.id, name: e.name, join: false });
   }

@@ -267,6 +267,116 @@ class Sim {
 
   level(p, sk) { return levelForXp(p.xp[sk] || 0); }
 
+  // ---------- magic ----------
+  // A wielded staff supplies its own rune type for free.
+  staffProvides(p) { const w = this.equippedIn(p, 'weapon'); return w ? (ITEMS[w.id].provides || null) : null; }
+  haveRunes(p, sp) {
+    const free = this.staffProvides(p);
+    for (const [id, q] of Object.entries(sp.runes)) if (id !== free && this.count(p, id) < q) return false;
+    return true;
+  }
+  spendRunes(p, sp) {
+    const free = this.staffProvides(p);
+    for (const [id, q] of Object.entries(sp.runes)) if (id !== free) this.remove(p, id, q);
+  }
+  missingRuneMsg(p, sp) {
+    const free = this.staffProvides(p);
+    for (const [id, q] of Object.entries(sp.runes))
+      if (id !== free && this.count(p, id) < q) { this.toPlayer(p, "You don't have enough " + ITEMS[id].name + 's to cast ' + sp.name + '.', 'm-red'); return; }
+  }
+  autocastSpell(p) { return p.autocast ? (SPELLS.find(s => s.id === p.autocast) || null) : null; }
+
+  // An NPC's live stat, after any curse has sapped it. Sap lives on the shared NPC,
+  // so one player's Confuse helps everyone hitting that monster — which is the point
+  // of casting it in a group.
+  npcStat(n, key) {
+    const base = NPC_DEFS[n.type][key] || 0;
+    const s = n.sap && n.sap[key];
+    if (!s) return base;
+    // always take at least a whole point off, or a 5% curse rounds away to nothing
+    return Math.max(1, base - Math.max(1, Math.round(base * s)));
+  }
+
+  // Cast at a monster. Mirrors game.js castSpell(); returns false when the cast
+  // could not happen so the caller can stop rather than lunge into melee.
+  castSpell(p, spellId, n, now) {
+    const sp = SPELLS.find(s => s.id === spellId);
+    if (!sp || (sp.kind !== 'combat' && sp.kind !== 'curse')) return false;
+    const d = NPC_DEFS[n.type], eq = this.equipBonus(p);
+    if (this.level(p, 'magic') < sp.lvl) { this.toPlayer(p, 'Your Magic level is not high enough for this spell.', 'm-red'); return false; }
+    if (!this.haveRunes(p, sp)) { this.missingRuneMsg(p, sp); return false; }
+
+    if (sp.kind === 'curse') {
+      this.spendRunes(p, sp);
+      n.sap = n.sap || {};
+      const already = n.sap[sp.sap] || 0;
+      this.emit({ kind: 'cast', from: p.id, x: p.x, z: p.z, tx: n.fx, tz: n.fz, layer: p.layer, curse: true });
+      this.addXp(p, 'magic', sp.xp);
+      this.pushStats(p);
+      if (already >= 0.15) { this.toPlayer(p, 'The ' + d.name + ' is already as weakened as this spell can make it.', 'm-game'); return true; }
+      n.sap[sp.sap] = already + sp.pct;
+      n.showHp = now + 5000;
+      this.toPlayer(p, 'You sap the ' + d.name + "'s " + SAP_NAME[sp.sap] + '.', 'm-quest');
+      return true;
+    }
+
+    this.spendRunes(p, sp);
+    const t = Combat.triMult('magic', d.carmour);
+    const effMag = (this.effLevel(p, 'magic') + eq.mAim) * t;    // staff/robes + triangle sharpen your aim
+    const hit = (effMag + 8) / (effMag + this.npcStat(n, 'def') + 16);
+    const dmg = Math.random() < hit ? Math.floor(Math.random() * (sp.max + 1 + (t > 1 ? 1 : 0))) : 0;
+    this.emit({ kind: 'cast', from: p.id, x: p.x, z: p.z, tx: n.fx, tz: n.fz, layer: p.layer });
+    this.hitNpc(p, n, dmg, now);
+    this.addXp(p, 'magic', sp.xp + dmg * 2);
+    if (dmg > 0) this.addXp(p, 'hits', dmg * 1.33);
+    this.pushStats(p);
+    return true;
+  }
+
+  intentAutocast(p, id) {
+    if (id && !SPELLS.find(s => s.id === id && s.kind === 'combat')) return;
+    p.autocast = id || null;
+    this.pushStats(p);
+  }
+
+  // Enchanting and alchemy: per-player, cast on something in your own pack.
+  intentCastOnItem(p, spellId, slot) {
+    const sp = SPELLS.find(s => s.id === spellId);
+    const it = p.inv[slot | 0];
+    if (!sp || !it || it.noted) return;
+    if (this.level(p, 'magic') < sp.lvl) { this.toPlayer(p, 'Your Magic level is not high enough for this spell.', 'm-red'); return; }
+    const def = ITEMS[it.id];
+
+    if (sp.kind === 'enchant') {
+      const into = ENCHANTS[it.id];
+      if (!into || def.gemset !== sp.ench) {
+        this.toPlayer(p, into ? sp.name + ' only works on ' + sp.ench + ' jewellery.' : 'That is not something you can enchant.', 'm-red');
+        return;
+      }
+      if (!this.haveRunes(p, sp)) { this.missingRuneMsg(p, sp); return; }
+      this.spendRunes(p, sp);
+      p.inv[slot | 0] = { id: into, qty: 1 };
+      this.addXp(p, 'magic', sp.xp);
+      this.toPlayer(p, 'The ' + sp.ench + ' flares and settles. You have made ' + ITEMS[into].name.toLowerCase() + '.', 'm-lvl');
+      this.pushStats(p);
+      return;
+    }
+
+    if (sp.kind === 'alch') {
+      if (it.id === 'coins') { this.toPlayer(p, 'That would be a very short spell.', 'm-red'); return; }
+      if (def.quest) { this.toPlayer(p, 'You cannot turn a quest item into coins.', 'm-red'); return; }
+      if (!def.value) { this.toPlayer(p, 'Nobody would give you a coin for that.', 'm-red'); return; }
+      if (!this.haveRunes(p, sp)) { this.missingRuneMsg(p, sp); return; }
+      this.spendRunes(p, sp);
+      const gp = Math.max(1, Math.floor(def.value * sp.rate * (it.qty || 1)));
+      p.inv.splice(slot | 0, 1);
+      this.add(p, 'coins', gp);
+      this.addXp(p, 'magic', sp.xp);
+      this.toPlayer(p, 'The ' + def.name.toLowerCase() + ' turns to ' + gp + ' coins in your hand.', 'm-game');
+      this.pushStats(p);
+    }
+  }
+
   // ---------- prayer ----------
   // Effective level: base plus whatever prayers are up. The combat rolls below use
   // this rather than level(), which is the entire point of the skill — a prayer that
@@ -349,7 +459,7 @@ class Sim {
   }
 
   pushStats(p) { this.emit({ kind: 'to', id: p.id, msg: { t: 'you', xp: p.xp, curHits: p.curHits, maxHits: this.maxHits(p), inv: p.inv, worn: p.worn, style: p.style, run: !!p.run, quests: p.quests || {}, firesLit: p.firesLit | 0, ratKills: p.ratKills | 0, patches: p.patches || {},
-    curPrayer: p.curPrayer | 0, prayersOn: p.prayersOn || {} } }); }
+    curPrayer: p.curPrayer | 0, prayersOn: p.prayersOn || {}, autocast: p.autocast || null } }); }
   toPlayer(p, text, cls) { this.emit({ kind: 'to', id: p.id, msg: { t: 'msg', text, cls: cls || 'm-game' } }); }
 
   // ---------- inventory ----------
@@ -959,7 +1069,11 @@ class Sim {
       if (!n || n.deadUntil || n.layer !== p.layer) { p.action = null; return; }
       a._n = n; tx = n.x; tz = n.z;
       // bows fire from range 5
-      if (a.kind === 'attack') { const w = this.equippedIn(p, 'weapon'); if (w && ITEMS[w.id].bow && this.bestArrow(p)) reach = 5; }
+      // Spells and bows both reach 5 tiles; a melee swing has to close.
+      if (a.kind === 'attack') {
+        const w = this.equippedIn(p, 'weapon');
+        if (a.spellId || this.autocastSpell(p) || (w && ITEMS[w.id].bow && this.bestArrow(p))) reach = 5;
+      }
     } else if (a.gid) {
       const g = this.ground.find(x => x.gid === a.gid);
       if (!g) { p.action = null; return; }
@@ -1311,11 +1425,16 @@ class Sim {
     const d = NPC_DEFS[n.type];
     if (!d.attackable) { this.toPlayer(p, 'You cannot attack that.', 'm-red'); p.action = null; return; }
     n.targetId = p.id;
+    // A spell chosen for this attack, or an autocast set in the spellbook, replaces
+    // the swing entirely — at a fixed 5-tick cast speed, as in singleplayer.
+    const spell = p.action && p.action.spellId ? SPELLS.find(s => s.id === p.action.spellId) : this.autocastSpell(p);
     const wep = this.equippedIn(p, 'weapon');
-    const usingBow = wep && ITEMS[wep.id].bow && this.bestArrow(p);
-    const speed = usingBow ? Combat.bowSpeed(wep.id, p.style) : this.weaponSpeed(p);
+    const usingBow = !spell && wep && ITEMS[wep.id].bow && this.bestArrow(p);
+    const speed = spell ? 5 : usingBow ? Combat.bowSpeed(wep.id, p.style) : this.weaponSpeed(p);
     if (this._gtick < (p.nextAtkTick || 0)) return;   // weapon still recovering from the last swing
     p.nextAtkTick = this._gtick + speed;
+    // Out of runes or under-levelled: stop rather than lunge into melee with a staff.
+    if (spell) { if (!this.castSpell(p, spell.id, n, now)) p.action = null; return; }
     const eq = this.equipBonus(p);
     let dmg;
     if (usingBow) {                                    // ranged: consume an arrow, apply the triangle
@@ -1324,12 +1443,13 @@ class Sim {
       const save = this.arrowSave(p);
       if (!(save > 0 && Math.random() < save)) this.remove(p, arrow, 1);
       const t = Combat.triMult('ranged', d.carmour);
-      dmg = this.rollHit((this.effLevel(p, 'ranged') + 4 + eq.rAim) * t, ((ITEMS[arrow].power || 2) + 2 + eq.rPow) * Combat.triPow(t), d.def);
+      // npcStat, not d.def: a curse that sapped its defence has to help the arrow too.
+      dmg = this.rollHit((this.effLevel(p, 'ranged') + 4 + eq.rAim) * t, ((ITEMS[arrow].power || 2) + 2 + eq.rPow) * Combat.triPow(t), this.npcStat(n, 'def'));
       if (dmg > 0) { this.addXp(p, 'ranged', dmg * 4); this.addXp(p, 'hits', dmg * 1.33); }
       this.pushStats(p);                               // arrow count changed
     } else {                                           // melee
       const t = Combat.triMult('melee', d.carmour);
-      dmg = this.rollHit((this.effLevel(p, 'attack') + eq.aim) * t, (this.effLevel(p, 'strength') + eq.power) * Combat.triPow(t), d.def);
+      dmg = this.rollHit((this.effLevel(p, 'attack') + eq.aim) * t, (this.effLevel(p, 'strength') + eq.power) * Combat.triPow(t), this.npcStat(n, 'def'));
       if (dmg > 0) {
         const style = p.style;
         if (style === 0) for (const sk of ['attack', 'strength', 'defense']) this.addXp(p, sk, dmg * 1.33);
@@ -1337,6 +1457,12 @@ class Sim {
         this.addXp(p, 'hits', dmg * 1.33);
       }
     }
+    this.hitNpc(p, n, dmg, now);
+  }
+
+  // Landing damage on a monster, shared by melee, ranged and magic so all three
+  // credit the kill the same way.
+  hitNpc(p, n, dmg, now) {
     Events.credit(this.eventCtx, n, p.id, dmg);
     // Track who hurt it, so the kill can be settled on damage rather than on who
     // happened to land the last blow (UPDATE_IDEAS §6A — open since 2001's

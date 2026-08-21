@@ -235,6 +235,7 @@ const Net = {
       case 'emote': return this.onEmote(m);
       case 'bank': return this.onBank(m);
       case 'shop': return this.onShop(m);
+      case 'cast': return this.onCast(m);
       case 'scenery': return this.applyScenery(m);
       case 'layer': {
         Game.player.layer = m.layer; Game.player.x = m.x; Game.player.z = m.z;
@@ -317,6 +318,7 @@ const Net = {
     // Prayer: the authority owns the points, the drain and the combat effect.
     if (typeof m.curPrayer === 'number') P.curPrayer = m.curPrayer;
     if (m.prayersOn) { P.prayersOn = m.prayersOn; UI.renderPrayers(); }
+    if ('autocast' in m) { P.autocast = m.autocast; UI.renderMagic(); }
     UI.renderInventory(); UI.renderStats(); UI.renderEquipment();
   },
 
@@ -339,6 +341,15 @@ const Net = {
     if (UI.modal === 'shop') UI.renderShop();
     else UI.openShop(m.shop);
     if (m.chime) Sound.play('coins');     // only for our own transaction
+  },
+
+  // Somebody cast a spell nearby — draw the bolt so a fight between two players
+  // and a monster reads the way it does offline.
+  onCast(m) {
+    if (m.layer !== undefined && m.layer !== Game.player.layer) return;
+    Game.projectiles.push({ fx: m.x, fz: m.z, tx: m.tx, tz: m.tz, t0: performance.now(), dur: 350,
+                            color: m.curse ? '#b06ad8' : '#66aaff', layer: Game.player.layer });
+    Sound.play('cast');
   },
 
   onChat(m) {
@@ -460,5 +471,10 @@ const Net = {
 
   // Prayer. The authority owns the points and the drain, so these are requests too.
   pray(id, on) { this.send({ t: 'pray', id, on: !!on }); },
-  bury(i) { this.send({ t: 'bury', i }); }
+  bury(i) { this.send({ t: 'bury', i }); },
+
+  // Magic. Combat casts ride on the attack action (spellId); these two are the
+  // spellbook settings and the item-targeted spells.
+  autocast(id) { this.send({ t: 'autocast', id: id || null }); },
+  castItem(id, i) { this.send({ t: 'castitem', id, i }); }
 };
