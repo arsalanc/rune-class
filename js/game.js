@@ -2283,7 +2283,7 @@ const Game = {
   // quest whose steps live in QUEST_STEPS and are therefore re-checked by the sim.
   // Everything else still says so, because its dialogue mutates player state
   // directly and the authority would never see it.
-  NET_TALK: ['guide', 'artisan', 'cook', 'banker', 'instructor', 'townsman', 'townswoman', 'villager', 'bartender', 'innkeeper', 'farmer', 'farmhand', 'marshal'],
+  NET_TALK: ['guide', 'artisan', 'cook', 'doric', 'shopkeeper', 'banker', 'instructor', 'townsman', 'townswoman', 'villager', 'bartender', 'innkeeper', 'farmer', 'farmhand', 'marshal'],
   netTalkTo(n) {
     const d = NPC_DEFS[n.type];
     if (!this.NET_TALK.includes(n.type)) return this.netTodo();
@@ -2681,23 +2681,16 @@ const Game = {
         ['Doric', "and I'll teach you a thing or two about metal."],
         ['', "You have started the quest: The Dwarf's Request"]
       ]);
-      q.dwarf = 1;
-      UI.renderQuests();
+      this.questAdvance('dwarf');
     } else if (q.dwarf === 1) {
-      if (this.countItem('copper_ore') >= 4 && this.countItem('tin_ore') >= 4) {
-        this.removeItem('copper_ore', 4);
-        this.removeItem('tin_ore', 4);
-        this.addItem('coins', 100);
-        this.addXp('mining', 250);
-        this.addXp('smithing', 300);
+      if (this.questReady('dwarf')) {
+        this.questAdvance('dwarf');
         this.dialogue([
           ['You', 'Here are your ores, Doric.'],
           ['Doric', 'Splendid! Watch closely now... and take these coins for your trouble.'],
           ['', "You have completed the quest: The Dwarf's Request!"]
         ]);
         Sound.play('coins');
-        q.dwarf = 2;
-        UI.renderQuests();
       } else {
         this.dialogue([['Doric', 'Still need 4 copper ore and 4 tin ore, friend. The mine is just south of here.']]);
       }
@@ -2716,10 +2709,7 @@ const Game = {
         ['Sergeant Kaelen', "See those goblins, penned behind the fence? Melee them and they'd tear at you."],
         { who: 'Sergeant Kaelen', text: 'Let me teach you range and magic. Stand outside the pen, and they cannot touch you. Ready?', choices: [
           { label: 'Teach me, Sergeant.', cb: () => {
-            q.combattut = 1;
-            if (!P.inv.some(i => i && ITEMS[i.id].bow)) this.addItem('shortbow', 1);
-            this.addItem('bronze_arrow', 40);
-            UI.renderQuests();
+            this.questAdvance('combattut');
             this.dialogue([
               ['Sergeant Kaelen', "Here — a shortbow and forty arrows. WIELD the bow (click it in your pack)."],
               ['Sergeant Kaelen', "Then attack a penned goblin from OUTSIDE the fence. It'll rage and claw and never reach you."],
@@ -2733,11 +2723,8 @@ const Game = {
       return;
     }
     if (q.combattut === 1) {
-      if (P.penRangedKills >= 1) {
-        this.addXp('ranged', 250); this.addItem('bronze_arrow', 60);
-        this.addItem('air_rune', 40); this.addItem('mind_rune', 40);
-        if (!P.inv.some(i => i && ITEMS[i.id].magic)) this.addItem('magic_staff', 1);
-        q.combattut = 2; UI.renderQuests();
+      if (this.questReady('combattut')) {
+        this.questAdvance('combattut');
         this.dialogue([
           ['Sergeant Kaelen', "HA! Dropped it clean, and not a scratch on you. THAT is a safe spot, recruit."],
           ['Sergeant Kaelen', "Now magic. Here — a wizard's staff. It feeds you air runes, so you'll only spend mind runes."],
@@ -2752,10 +2739,8 @@ const Game = {
       return;
     }
     if (q.combattut === 2) {
-      if (P.penMagicKills >= 1) {
-        this.addXp('magic', 250); this.addItem('air_rune', 30); this.addItem('mind_rune', 30); this.addItem('bronze_arrow', 40);
-        this.addItem('wizard_hat', 1); this.addItem('wizard_robe', 1);
-        q.combattut = 3; UI.renderQuests();
+      if (this.questReady('combattut')) {
+        this.questAdvance('combattut');
         this.dialogue([
           ['Sergeant Kaelen', "Struck down with a bolt of wind, and never in harm's way. THAT wins wars, recruit."],
           ['Sergeant Kaelen', "One last lesson — the fighter's triangle. MAGIC beats MELEE, MELEE beats RANGE, RANGE beats MAGIC."],
@@ -3565,20 +3550,15 @@ const Game = {
         ['Shopkeeper', "and I'll pay you well."],
         ['', 'You have started the quest: Rat Menace']
       ]);
-      q.rats = 1;
-      UI.renderQuests();
+      this.questAdvance('rats');
     } else if (q.rats === 1) {
-      if (this.player.ratKills >= 5) {
-        this.addItem('coins', 150);
-        this.addItem('bronze_mace', 1);
-        this.addXp('attack', 250);
+      if (this.questReady('rats')) {
+        this.questAdvance('rats');
         this.dialogue([
           ['Shopkeeper', 'The rats are gone? Marvellous! Here, coins and a mace from my stock.'],
           ['', 'You have completed the quest: Rat Menace!']
         ]);
         Sound.play('coins');
-        q.rats = 2;
-        UI.renderQuests();
       } else {
         this.dialogue([['Shopkeeper', 'Still ' + (5 - this.player.ratKills) + ' rats gnawing at my stock! The meadow is south of town.']]);
       }
@@ -3589,21 +3569,16 @@ const Game = {
         ['Shopkeeper', 'from the bears in the western forest and I will pay handsomely.'],
         ['', 'You have started the quest: Fur Trader']
       ]);
-      q.furs = 1;
-      UI.renderQuests();
+      this.questAdvance('furs');
     } else if (q.furs === 1) {
-      if (this.countItem('fur') >= 3) {
-        this.removeItem('fur', 3);
-        this.addItem('coins', 200);
-        this.addXp('crafting', 250);
+      if (this.questReady('furs')) {
+        this.questAdvance('furs');
         this.dialogue([
           ['You', 'Three bear furs, as promised.'],
           ['Shopkeeper', 'Magnificent pelts! Here is your payment.'],
           ['', 'You have completed the quest: Fur Trader!']
         ]);
         Sound.play('coins');
-        q.furs = 2;
-        UI.renderQuests();
       } else {
         this.dialogue([['Shopkeeper', 'I still need ' + (3 - this.countItem('fur')) + ' more bear furs. Beware — bears bite back!']]);
       }

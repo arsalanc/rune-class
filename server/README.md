@@ -53,8 +53,8 @@ content (farms, training yard, Hollow-folk camp, Giants' Den, town walls,
 Southmarch and the Rookmoor road) match singleplayer.
 
 Every skill is now shared and server-authoritative. Still singleplayer-only:
-most quests. Three quests are ported — The Guide's Lunch, The
-Artisan's Apprentice and The Cook's Feast. Because the
+most quests. Seven are ported: The Guide's Lunch, The Artisan's Apprentice, The
+Cook's Feast, The Dwarf's Request, Rat Menace, Fur Trader and Trial by Fire. Because the
 combat/skilling maths are now shared modules, bringing these online later is
 mostly writing the intents + server handlers — the rules already live in one place.
 

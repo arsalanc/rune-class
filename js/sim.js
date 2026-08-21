@@ -237,6 +237,8 @@ class Sim {
     p.quests = (d.quests && typeof d.quests === 'object') ? Object.assign({}, d.quests) : {};
     p.firesLit = d.firesLit | 0;
     p.ratKills = d.ratKills | 0;
+    p.penRangedKills = d.penRangedKills | 0;
+    p.penMagicKills = d.penMagicKills | 0;
     // Crop patches are per-player, as in singleplayer: everyone tends their own
     // allotment on the same tile. Shared patches would mean whoever walked past
     // first could harvest your crop, which is not a thing to do to a friend.
@@ -1434,7 +1436,8 @@ class Sim {
     if (this._gtick < (p.nextAtkTick || 0)) return;   // weapon still recovering from the last swing
     p.nextAtkTick = this._gtick + speed;
     // Out of runes or under-levelled: stop rather than lunge into melee with a staff.
-    if (spell) { if (!this.castSpell(p, spell.id, n, now)) p.action = null; return; }
+    if (spell) { p._lastAttackType = 'magic'; if (!this.castSpell(p, spell.id, n, now)) p.action = null; return; }
+    p._lastAttackType = usingBow ? 'ranged' : 'melee';   // how the pen-goblin lessons are judged
     const eq = this.equipBonus(p);
     let dmg;
     if (usingBow) {                                    // ranged: consume an arrow, apply the triangle
@@ -1481,6 +1484,16 @@ class Sim {
       if (amt > best) { best = amt; const q = this.players.get(Number(id)); if (q) owner = q; }
     this.toPlayer(owner, 'You have defeated the ' + d.name + '.');
     if (owner !== lastHit && lastHit) this.toPlayer(lastHit, 'You land the killing blow, but ' + owner.name + ' did more of the work.', 'm-game');
+    // Quest kill counters. These belong to whoever earned the kill, and the sim is
+    // the only thing that touches them — a client cannot claim it shot a goblin.
+    if (owner) {
+      if (n.type === 'rat' && (owner.quests || {}).rats === 1) owner.ratKills = (owner.ratKills | 0) + 1;
+      if (n.type === 'pen_goblin') {
+        if (owner._lastAttackType === 'ranged') owner.penRangedKills = (owner.penRangedKills | 0) + 1;
+        else if (owner._lastAttackType === 'magic') owner.penMagicKills = (owner.penMagicKills | 0) + 1;
+      }
+      this.pushStats(owner);
+    }
     n.deadUntil = now + (d.respawn || 20) * 1000; n.targetId = 0; n.splat = null;
     n.dmgBy = null;
     // No kill bonus is paid here. Hits xp already lands per blow in doAttack, so every

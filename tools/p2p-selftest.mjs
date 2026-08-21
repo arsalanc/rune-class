@@ -661,6 +661,43 @@ guest.Net.questStep('lunch');
 await sleep(400);
 check('a completed quest cannot be farmed', host.Host.sim.count(simP(), 'coins') === 100 && simP().quests.lunch === 2);
 
+// The other ported quests, including the counter-proved ones. Counters live on the
+// sim and only killNpc touches them, so a client cannot claim it shot a goblin.
+simP().inv = []; simP().quests = {}; simP().xp = { hits: 1154 };
+simP().ratKills = 0; simP().penRangedKills = 0; simP().penMagicKills = 0;
+
+guest.Net.questStep('dwarf');
+await sleep(300);
+host.Host.sim.add(simP(), 'copper_ore', 4); host.Host.sim.add(simP(), 'tin_ore', 4);
+guest.Net.questStep('dwarf');
+await sleep(400);
+check("The Dwarf's Request completes", simP().quests.dwarf === 2);
+check('and pays its original reward', (simP().xp.mining || 0) === 250 && (simP().xp.smithing || 0) === 300);
+
+guest.Net.questStep('rats');
+await sleep(300);
+guest.Net.questStep('rats');
+await sleep(300);
+check('a kill-count quest will not advance without the kills', simP().quests.rats === 1);
+simP().ratKills = 5;
+guest.Net.questStep('rats');
+await sleep(400);
+check('and completes once the sim has counted them', simP().quests.rats === 2);
+check('paying its reward', sim2().count(simP(), 'bronze_mace') === 1);
+
+guest.Net.questStep('combattut');
+await sleep(300);
+check('Trial by Fire hands out the bow', sim2().count(simP(), 'shortbow') === 1);
+simP().penRangedKills = 1;
+guest.Net.questStep('combattut');
+await sleep(300);
+check('the ranged lesson passes on a ranged kill', simP().quests.combattut === 2);
+check('and hands over the staff', sim2().count(simP(), 'magic_staff') === 1);
+simP().penMagicKills = 1;
+guest.Net.questStep('combattut');
+await sleep(300);
+check('the magic lesson completes the tutorial', simP().quests.combattut === 3);
+
 // Progress is per-player: the host's own character is untouched by all of that.
 const hostQuests = (() => { const c = [...host.Host.clients.values()].find(x => x.local); return host.Host.sim.players.get(c.pid).quests || {}; })();
 check('quest progress is per-player, not shared', !hostQuests.lunch,

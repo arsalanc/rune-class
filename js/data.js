@@ -517,6 +517,42 @@ const QUEST_STEPS = {
       { from: 5, to: 6, needs: { leather_coif: 1 }, xp: { crafting: 350 }, give: { coins: 300 } }
     ]
   },
+  dwarf: {
+    name: "The Dwarf's Request",
+    steps: [
+      { from: 0, to: 1 },
+      { from: 1, to: 2, needs: { copper_ore: 4, tin_ore: 4 },
+        give: { coins: 100 }, xp: { mining: 250, smithing: 300 } }
+    ]
+  },
+  rats: {
+    name: 'Rat Menace',
+    steps: [
+      { from: 0, to: 1 },
+      { from: 1, to: 2, counter: { ratKills: 5 },
+        give: { coins: 150, bronze_mace: 1 }, xp: { attack: 250 } }
+    ]
+  },
+  furs: {
+    name: 'Fur Trader',
+    steps: [
+      { from: 0, to: 1 },
+      { from: 1, to: 2, needs: { fur: 3 }, give: { coins: 200 }, xp: { crafting: 250 } }
+    ]
+  },
+  // The tutorial for the two skills that just came online. Both lessons are proved by
+  // a kill *of the right kind* — the sim counts penned-goblin kills by attack type,
+  // which is the only way "you did it from a safe spot with a bow" can be checked.
+  combattut: {
+    name: 'Trial by Fire',
+    steps: [
+      { from: 0, to: 1, give: { shortbow: 1, bronze_arrow: 40 } },
+      { from: 1, to: 2, counter: { penRangedKills: 1 }, xp: { ranged: 250 },
+        give: { bronze_arrow: 60, air_rune: 40, mind_rune: 40, magic_staff: 1 } },
+      { from: 2, to: 3, counter: { penMagicKills: 1 }, xp: { magic: 250 },
+        give: { air_rune: 30, mind_rune: 30, bronze_arrow: 40, wizard_hat: 1, wizard_robe: 1 } }
+    ]
+  },
   // Unblocked by farming: the egg comes from the coop, the milk from a cow and the
   // flour from wheat at the windmill.
   cooksfeast: {

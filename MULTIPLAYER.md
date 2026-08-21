@@ -212,12 +212,22 @@ the same reason `combat.js` and `cookBurnChance()` are shared.
 and quests whose steps live in that table. Everything else still says so, because its
 dialogue mutates player state directly and the authority would never see it.
 
-Ported so far: **The Guide's Lunch**, **The Artisan's Apprentice** and **The Cook's
-Feast**, all completable end to end. Steps proved by a running total rather than an item held —
+Ported so far, all completable end to end: **The Guide's Lunch**, **The Artisan's
+Apprentice**, **The Cook's Feast**, **The Dwarf's Request**, **Rat Menace**, **Fur
+Trader** and **Trial by Fire**. Steps proved by a running total rather than an item held —
 the Apprentice's "light 2 fires" — use a `counter` field checked against a tally the
-sim keeps, so the client never touches it. Each of these was unblocked by a skill
-landing first — the Apprentice by crafting, the Cook's Feast by farming — which is
-why the skills went in before the quests that need them.
+sim keeps, so the client never touches it: Rat Menace counts rats, and Trial by Fire
+counts penned-goblin kills *by attack type*, which is the only way "you did it from a
+safe spot with a bow" can be checked at all.
+
+Each was unblocked by a skill landing first — the Apprentice by crafting, the Cook's
+Feast by farming, Trial by Fire by ranged and magic — which is why the skills went in
+before the quests that need them.
+
+What is left are the quests that change the **world**: the souls questline's bell
+peal opens the Font gate, and Animal Magnetism empties a plinth. Those are the first
+content that will exercise the shared half of the model, and they need something
+nothing else has: the world state has to survive the host closing their tab.
 
 ### Production skills
 
