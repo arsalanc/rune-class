@@ -105,6 +105,27 @@ Worth being straight about, because the guarantees stop in specific places.
 
 The plaintext password is never stored or transmitted anywhere, in either mode.
 
+### The world itself
+
+The world is regenerated from scratch every time the sim boots, so anything a quest
+changed **for good** has to be re-applied — otherwise a host who closes their tab
+re-seals a gate the world already opened, and the players who did that quest find the
+chamber walled up again.
+
+That state is kept as a handful of named **facts** (`worldFlags`), not as a dump of
+scenery. This matters: `sceneryOverrides` also holds every chopped tree and depleted
+rock, which respawn on their own and would be nonsense to persist — a tree felled a
+second before shutdown would stay a stump for ever. A fact is small, readable, and
+survives world-generation changes that would invalidate saved tile data.
+
+`WORLD_EFFECTS` in [`js/sim.js`](js/sim.js) maps each fact to the change it makes, and
+every effect runs through `setScenery()` — so it broadcasts to everyone present and
+reaches later joiners through `allOverrides()` with no extra plumbing. Facts are
+written the moment they change rather than on the 30-second tick: they are rare, and
+losing one to a closed tab would undo a quest.
+
+Stored in the host's IndexedDB (`meta/worldstate`) and, for LAN, `server/world.json`.
+
 ## Vendored dependencies
 
 [`js/vendor/`](js/vendor/) holds two committed bundles, rebuilt by
@@ -224,10 +245,11 @@ Each was unblocked by a skill landing first — the Apprentice by crafting, the 
 Feast by farming, Trial by Fire by ranged and magic — which is why the skills went in
 before the quests that need them.
 
-What is left are the quests that change the **world**: the souls questline's bell
-peal opens the Font gate, and Animal Magnetism empties a plinth. Those are the first
-content that will exercise the shared half of the model, and they need something
-nothing else has: the world state has to survive the host closing their tab.
+The **bell peal** is the first content to exercise the shared half of the model.
+Working out the order is per-player — everyone solves the puzzle themselves — but the
+Font gate it opens is a fact about the world, so the first person to ring it true
+opens the stair for everybody, permanently, including players who join months later.
+The earlier stages of the souls questline still gate reaching it in normal play.
 
 ### Production skills
 

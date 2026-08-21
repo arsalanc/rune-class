@@ -3435,6 +3435,10 @@ const Game = {
       if (s.type === 'shrine') opts.push({ label: 'Pray at shrine', cb: () => this.netAction('altar', { s }) });
       // Farming. patchState() reads the mirrored patches, so these say the same
       // thing they do offline; the sim re-checks state, level and tool.
+      if (s.type === 'bell') {
+        opts.push({ label: 'Ring ' + s.bell + ' bell', cb: () => this.netAction('bell', { s }) });
+        opts.push({ label: 'Examine ' + s.bell + ' bell', cb: () => this.msg('The ' + s.bell + ' bell of Mourncross. Its name is cut into the rim, worn but legible.', 'm-game') });
+      }
       if (s.type === 'wheat') opts.push({ label: 'Pick wheat', cb: () => this.netAction('wheat', { s }) });
       if (s.type === 'windmill') opts.push({ label: 'Grind wheat', cb: () => this.netAction('mill', { s }) });
       if (s.type === 'chicken_coop') opts.push({ label: 'Search coop', cb: () => this.netAction('coop', { s }) });

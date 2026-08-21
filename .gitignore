@@ -1,5 +1,6 @@
 node_modules/
 server/players/
+server/world.json
 *.log
 # dev-only: holds the npm packages used to regenerate js/vendor/ (see tools/build-vendor.sh).
 # The generated bundles in js/vendor/ ARE committed — the game must run from a plain

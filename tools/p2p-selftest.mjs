@@ -102,6 +102,11 @@ function makeRealm(tag) {
     vm.runInContext(read(f), ctx, { filename: f });
   }
 
+  // The browser client generates its own copy of the world during Game.init(), and
+  // scenery updates from the authority are applied onto it. Without this a guest
+  // realm has World.L === null and silently drops every scenery broadcast.
+  vm.runInContext('World.gen();', ctx, { filename: 'worldgen.js' });
+
   // Stand-ins for the parts of the client net.js talks to.
   vm.runInContext(`
     var Sound = { ensure() {}, play() {} };
@@ -633,6 +638,48 @@ guest.Net.autocast(null);
 await sleep(400);
 check('autocast can be cleared', !simP().autocast);
 
+// --- permanent world state: per-player progress, shared and lasting effect ---
+const gateTiles = [[129, 43], [130, 43]];
+const gateSealed = (realm) => gateTiles.every(([x, z]) => realm.World.L[0].scenery.has(realm.World.key(x, z)));
+const gateOpen = (realm) => gateTiles.every(([x, z]) => !realm.World.L[0].scenery.has(realm.World.key(x, z)));
+check('the Font gate starts sealed', gateSealed(host));
+
+const bells = [];
+for (const [, sc] of host.World.L[0].scenery) if (sc.type === 'bell') bells.push(sc);
+check('the bell tower has four named bells', bells.length === 4, bells.map(b => b.bell).join(','));
+
+const ringBell = async (name) => {
+  const b = bells.find(x => x.bell === name);
+  const p = simP(); p.x = b.x + 0.5; p.z = b.z + 0.5; p.path = []; p.action = null;
+  guest.Net.action({ kind: 'bell', key: host.World.key(b.x, b.z) });
+  await sleep(1400);
+};
+
+// Ringing without the quest stage tells you nothing and opens nothing.
+simP().quests = {}; simP().peal = [];
+await ringBell('Dawn');
+check('ringing without the quest gets you nowhere', gateSealed(host) && (simP().peal || []).length === 0);
+
+simP().quests = { souls: 4 };
+await ringBell('Deep');                       // wrong opening note
+check('a wrong note resets the peal', (simP().peal || []).length === 0);
+for (const n of ['Dawn', 'Deep', 'Thin', 'Mourning']) await ringBell(n);
+check('the full peal completes the stage', simP().quests.souls === 5);
+check('and opens the gate in the world', gateOpen(host));
+check('the world flag was recorded', host.Host.sim.worldFlag('fontGate'));
+check('the host persisted it', !!(tables.meta.get('worldstate') || {}).flags?.fontGate);
+
+// Everyone present sees the gate open, not just whoever rang it.
+await sleep(600);
+check('the other player sees the gate open too', gateOpen(guest));
+
+// The point of all of it: rebuild the sim from the saved flags, as a host restart
+// does, and the gate is still open — including for someone who joins afterwards.
+const reborn = new host.Sim((tables.meta.get('worldstate') || {}).flags);
+check('a restarted world still has the gate open', gateOpen(host));
+check('and tells new joiners about it',
+  reborn.allOverrides().filter(o => o.stype === null && o.z === 43 && (o.x === 129 || o.x === 130)).length === 2);
+
 // --- quests: progress is per-player, and the sim polices every step ---
 simP().inv = [];
 simP().quests = {};
@@ -704,6 +751,12 @@ check('quest progress is per-player, not shared', !hostQuests.lunch,
   'host sees lunch=' + hostQuests.lunch);
 
 // --- the character save survives a disconnect ---
+// Park somewhere walkable first. fromSave() bounces a character that saved on a
+// blocked tile back to spawn — correct, but it would make the position check below
+// assert the wrong thing after the bell tests left us standing on a bell.
+simP().x = host.World.SPAWN.x + 2.5; simP().z = host.World.SPAWN.z + 2.5; simP().layer = 0; simP().path = [];
+await sleep(300);
+
 guest.Net.transport.close();
 await sleep(300);
 check('the host drops the guest on disconnect', host.Host.clients.size === 1, 'clients=' + host.Host.clients.size);

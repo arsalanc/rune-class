@@ -96,6 +96,18 @@ const Host = {
     return this.world.id;
   },
 
+  // ---------- permanent world state ----------
+  // Kept beside the world config, not in a player's save: an opened gate belongs to
+  // the world, so it stays open for everyone including players who join later.
+  async loadWorldFlags() {
+    try { const row = await Store.get('meta', 'worldstate'); return (row && row.flags) || {}; }
+    catch (e) { return {}; }
+  },
+  async saveWorldFlags(flags) {
+    try { await Store.put('meta', { key: 'worldstate', flags: flags || {}, saved: Date.now() }); }
+    catch (e) { /* quota or private mode — the world just resets next time */ }
+  },
+
   // ---------- accounts ----------
   async account(name) { try { return await Store.get('accounts', this.normName(name)); } catch (e) { return null; } },
   async listAccounts() { try { return await Store.all('accounts'); } catch (e) { return []; } },
@@ -136,7 +148,7 @@ const Host = {
     if (!this.world) await this.createWorld(opts.invite || this.newInviteCode());
     else if (opts.invite && opts.invite !== this.world.invite) await this.setInvite(opts.invite);
 
-    this.sim = new Sim();
+    this.sim = new Sim(await this.loadWorldFlags());
     this.clients.clear();
     this.running = true;
     this._setStatus('starting', 'Registering with the signalling broker…');
@@ -249,6 +261,10 @@ const Host = {
       else if (e.kind === 'announce') this.broadcast({ t: 'msg', text: e.text, cls: e.cls });
       else if (e.kind === 'emote') this.broadcast({ t: 'emote', id: e.id, emote: e.emote });
       else if (e.kind === 'cast') this.broadcast({ t: 'cast', from: e.from, x: e.x, z: e.z, tx: e.tx, tz: e.tz, layer: e.layer, curse: !!e.curse });
+      // A permanent change to the world. Written immediately rather than on the
+      // 30s save tick: these are rare, and losing one to a closed tab would re-seal
+      // a gate the world already opened.
+      else if (e.kind === 'worldflag') this.saveWorldFlags(e.flags);
       else if (e.kind === 'join') this.broadcast({ t: 'online', id: e.id, name: e.name, join: true }, e.id);
       else if (e.kind === 'leave') this.broadcast({ t: 'online', id: e.id, name: e.name, join: false });
     }

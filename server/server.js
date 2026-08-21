@@ -9,7 +9,18 @@ const PORT = process.env.PORT || 8787;
 const SAVE_DIR = path.join(__dirname, 'players');
 fs.mkdirSync(SAVE_DIR, { recursive: true });
 
-const sim = new Sim();
+// Permanent world facts live beside the player saves. The world regenerates from
+// scratch on boot, so anything a quest opened for good is re-applied from here.
+const WORLD_FILE = path.join(SAVE_DIR, '..', 'world.json');
+function loadWorldFlags() {
+  try { return JSON.parse(fs.readFileSync(WORLD_FILE, 'utf8')).flags || {}; } catch (e) { return {}; }
+}
+function saveWorldFlags(flags) {
+  try { fs.writeFileSync(WORLD_FILE, JSON.stringify({ flags: flags || {}, saved: Date.now() }, null, 2)); }
+  catch (e) { /* ignore */ }
+}
+
+const sim = new Sim(loadWorldFlags());
 const clients = new Map(); // ws -> { id, name }
 
 function saveName(name) { return path.join(SAVE_DIR, name.replace(/[^a-z0-9_-]/gi, '_').toLowerCase() + '.json'); }
@@ -111,6 +122,9 @@ function flushEvents() {
     else if (e.kind === 'announce') broadcast({ t: 'msg', text: e.text, cls: e.cls });
     else if (e.kind === 'emote') broadcast({ t: 'emote', id: e.id, emote: e.emote });
     else if (e.kind === 'cast') broadcast({ t: 'cast', from: e.from, x: e.x, z: e.z, tx: e.tx, tz: e.tz, layer: e.layer, curse: !!e.curse });
+    // Written immediately: these are rare, and losing one would re-seal a gate the
+    // world already opened.
+    else if (e.kind === 'worldflag') saveWorldFlags(e.flags);
     else if (e.kind === 'join') broadcast({ t: 'online', id: e.id, name: e.name, join: true }, e.id);
     else if (e.kind === 'leave') broadcast({ t: 'online', id: e.id, name: e.name, join: false });
   }

@@ -8,6 +8,27 @@
 // therefore takes its dependencies — ITEMS, World, Combat, Events, … — from the
 // enclosing scope rather than importing them, exactly like the other js/ files do.
 
+// ---------------------------------------------------------------------------
+// Permanent changes to the shared world.
+//
+// The world is regenerated from scratch every time the sim starts, so anything a
+// quest changed for good has to be re-applied on boot — otherwise a host who closes
+// their tab re-seals a gate the whole world already opened, and the players who did
+// that quest find the chamber walled up again.
+//
+// These are stored as a handful of named *facts*, not as a dump of scenery. That
+// matters: `sceneryOverrides` also holds every chopped tree and depleted rock, which
+// respawn on their own and would be nonsense to persist — a tree felled a second
+// before shutdown would stay a stump for ever. A fact is small, readable, and
+// survives world-generation changes that would invalidate saved tile data.
+//
+// Each effect runs through setScenery(), so it broadcasts to everyone present and
+// reaches later joiners through allOverrides() with no extra plumbing.
+const WORLD_EFFECTS = {
+  // The bell peal folds the Font gate open (souls questline).
+  fontGate: (sim) => { for (const [x, z] of [[129, 43], [130, 43]]) sim.setScenery(0, x, z, null); }
+};
+
 const SLOW_EVERY = 4;         // 150ms loop; "slow" logic (gather/combat/AI) every 4th = 600ms
 const MOVE_SPEED = 2.1;       // tiles/sec, matches the singleplayer feel
 const RUN_SPEED = 3.9;        // same pair of constants singleplayer uses (game.js tick)
@@ -15,8 +36,11 @@ const RUN_SPEED = 3.9;        // same pair of constants singleplayer uses (game.
 let nextId = 1;
 
 class Sim {
-  constructor() {
+  constructor(worldFlags) {
     World.gen();
+    // Facts about this world that outlive a session. Applied below, once the world
+    // exists and the override map is ready to record them.
+    this.worldFlags = Object.assign({}, worldFlags || {});
     this.players = new Map();       // id -> player
     this.npcs = [];
     this.ground = [];
@@ -33,7 +57,26 @@ class Sim {
     this._gtick = 0;                // game-tick counter (one per 600ms slow tick) — drives attack speeds
     this.spawnNpcs();
     this.initEvents();
+    this.applyWorldFlags();
   }
+
+  // ---------- permanent world state ----------
+  applyWorldFlags() {
+    for (const [name, on] of Object.entries(this.worldFlags))
+      if (on && WORLD_EFFECTS[name]) WORLD_EFFECTS[name](this);
+  }
+
+  // Set a fact and make it so. Idempotent, and emits so the transport can persist it
+  // — the effect itself broadcasts through setScenery.
+  setWorldFlag(name, value) {
+    if (!WORLD_EFFECTS[name]) return false;
+    if (this.worldFlags[name] === (value !== false)) return false;   // already the case
+    this.worldFlags[name] = value !== false;
+    if (this.worldFlags[name]) WORLD_EFFECTS[name](this);
+    this.emit({ kind: 'worldflag', name, value: this.worldFlags[name], flags: Object.assign({}, this.worldFlags) });
+    return true;
+  }
+  worldFlag(name) { return !!this.worldFlags[name]; }
 
   // ---------- dynamic events ----------
   // Same runner as singleplayer (shared/events.js); only this adapter differs.
@@ -1109,6 +1152,7 @@ class Sim {
       // Production actions repeat every slow tick until the materials run out, the
       // same way singleplayer keeps P.action set — so one click smelts a whole
       // inventory. Each one clears p.action itself when it cannot continue.
+      case 'bell': return this.doRingBell(p, a);
       case 'altar': return this.doAltar(p, a);
       case 'rake': return this.doRake(p, a);
       case 'plant': return this.doPlant(p, a);
@@ -1140,6 +1184,36 @@ class Sim {
       }
       default: p.action = null;
     }
+  }
+
+  // The bell peal. Progress through the sequence is *per-player* — everyone has to
+  // work the puzzle out themselves — but the gate it opens is a fact about the world,
+  // so the first person to ring it true opens the Font stair for everybody, for good.
+  PEAL = ['Dawn', 'Deep', 'Thin', 'Mourning'];
+  doRingBell(p, a) {
+    p.action = null;
+    const s = a._s;
+    if (s.type !== 'bell' || !s.bell) return;
+    const q = p.quests || (p.quests = {});
+    if (this.worldFlag('fontGate')) { this.toPlayer(p, 'You ring the ' + s.bell + ' bell. Its note rolls out over the flats and fades.', 'm-game'); return; }
+    if ((q.souls | 0) < 4) { this.toPlayer(p, 'You ring the ' + s.bell + ' bell. Nothing answers it — you have no idea what order it wants.', 'm-game'); return; }
+
+    p.peal = p.peal || [];
+    p.peal.push(s.bell);
+    if (this.PEAL[p.peal.length - 1] !== s.bell) {
+      p.peal = [];
+      this.toPlayer(p, 'The note sours halfway out. Somewhere below, something stops listening. Begin again.', 'm-red');
+      return;
+    }
+    if (p.peal.length < 4) {
+      this.toPlayer(p, 'The ' + s.bell + ' bell rings true, and hangs there waiting for the next. (' + p.peal.length + ' of 4)', 'm-lvl');
+      return;
+    }
+    p.peal = []; q.souls = 5;
+    this.setWorldFlag('fontGate', true);
+    this.toPlayer(p, 'The four bells ring the funeral peal of Mourncross, in order, for the first time in fifty years.', 'm-lvl');
+    this.emit({ kind: 'announce', text: 'Iron grinds on stone beneath the tower. The gate over the Font stair folds open.', cls: 'm-quest' });
+    this.pushStats(p);
   }
 
   doAltar(p, a) {
