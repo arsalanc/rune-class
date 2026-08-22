@@ -713,6 +713,30 @@ check('a completed quest cannot be farmed', host.Host.sim.count(simP(), 'coins')
 simP().inv = []; simP().quests = {}; simP().xp = { hits: 1154 };
 simP().ratKills = 0; simP().penRangedKills = 0; simP().penMagicKills = 0;
 
+// The Restless Dead, then the opening of The Weight of Souls. These two chain: the
+// relic is handed over, then handed back, and `hold` means Wenna reading it does not
+// eat it.
+guest.Net.questStep('relic');
+await sleep(300);
+guest.Net.questStep('relic');
+await sleep(300);
+check('a fetch quest will not complete without the item', simP().quests.relic === 1);
+host.Host.sim.add(simP(), 'ancient_relic', 1);
+guest.Net.questStep('relic');
+await sleep(400);
+check('The Restless Dead completes', simP().quests.relic === 2);
+check('and takes the relic', sim2().count(simP(), 'ancient_relic') === 0);
+
+guest.Net.questStep('souls');
+await sleep(400);
+check('The Weight of Souls hands the relic back', sim2().count(simP(), 'ancient_relic') === 1);
+guest.Net.questStep('souls');
+await sleep(400);
+check('a `hold` step advances without consuming', simP().quests.souls === 2 && sim2().count(simP(), 'ancient_relic') === 1);
+guest.Net.questStep('souls');
+await sleep(300);
+check('and the chain stops where the sim stops modelling it', simP().quests.souls === 2);
+
 guest.Net.questStep('dwarf');
 await sleep(300);
 host.Host.sim.add(simP(), 'copper_ore', 4); host.Host.sim.add(simP(), 'tin_ore', 4);

@@ -233,9 +233,15 @@ the same reason `combat.js` and `cookBurnChance()` are shared.
 and quests whose steps live in that table. Everything else still says so, because its
 dialogue mutates player state directly and the authority would never see it.
 
-Ported so far, all completable end to end: **The Guide's Lunch**, **The Artisan's
+Ported and completable end to end: **The Guide's Lunch**, **The Artisan's
 Apprentice**, **The Cook's Feast**, **The Dwarf's Request**, **Rat Menace**, **Fur
-Trader** and **Trial by Fire**. Steps proved by a running total rather than an item held —
+Trader**, **Trial by Fire** and **The Restless Dead**.
+
+**The Weight of Souls** is partial on purpose: its opening two steps are here, and
+its bell peal is implemented, but from stage 2 it needs a Ghostspeak Amulet — marsh
+sand, ectoplasm, furnace fusing, wraith drops and altar threading — none of which the
+sim models. The table stops where the sim stops, rather than offering a step that
+cannot be finished. Steps proved by a running total rather than an item held —
 the Apprentice's "light 2 fires" — use a `counter` field checked against a tally the
 sim keeps, so the client never touches it: Rat Menace counts rats, and Trial by Fire
 counts penned-goblin kills *by attack type*, which is the only way "you did it from a

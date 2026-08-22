@@ -492,6 +492,9 @@ const COOKABLES = {
 //
 //   from/to  the stage this step moves the player between
 //   needs    items that must be held, and are consumed
+//   hold     items that must be held, and are NOT consumed — for the steps where
+//            someone examines a thing and gives it back
+//   counter  a running total the sim keeps (rats killed, fires lit) that must be met
 //   give     items granted
 //   xp       experience granted, by skill
 const QUEST_STEPS = {
@@ -515,6 +518,26 @@ const QUEST_STEPS = {
       { from: 3, to: 4, needs: { bronze_bar: 1 }, xp: { mining: 250, smithing: 220 } },
       { from: 4, to: 5, needs: { shrimp: 1 }, xp: { fishing: 250, cooking: 250 } },
       { from: 5, to: 6, needs: { leather_coif: 1 }, xp: { crafting: 350 }, give: { coins: 300 } }
+    ]
+  },
+  relic: {
+    name: 'The Restless Dead',
+    // The relic is a real item spawn on the dungeon floor, so this is walkable
+    // start to finish: climb down, take it, carry it back.
+    steps: [
+      { from: 0, to: 1 },
+      { from: 1, to: 2, needs: { ancient_relic: 1 }, give: { coins: 200 }, xp: { prayer: 300 } }
+    ]
+  },
+  // The Weight of Souls. Only the opening two steps are here — from stage 2 the quest
+  // needs a Ghostspeak Amulet, which means marsh sand, ectoplasm, furnace fusing,
+  // wraith drops and altar threading, none of which the sim models yet. The bell peal
+  // at stage 4 is implemented (js/sim.js doRingBell) and is what opens the Font gate.
+  souls: {
+    name: 'The Weight of Souls',
+    steps: [
+      { from: 0, to: 1, give: { ancient_relic: 1 } },
+      { from: 1, to: 2, hold: { ancient_relic: 1 } }        // she reads it and hands it back
     ]
   },
   dwarf: {

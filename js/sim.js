@@ -880,6 +880,9 @@ class Sim {
     if (!step) return;                                   // unknown quest, or already past this
     for (const [id, q] of Object.entries(step.needs || {}))
       if (this.count(p, id) < q) { this.toPlayer(p, "You don't have what is needed yet.", 'm-red'); return; }
+    // `hold` is checked but never consumed — someone looks at the thing and gives it back.
+    for (const [id, q] of Object.entries(step.hold || {}))
+      if (this.count(p, id) < q) { this.toPlayer(p, "You don't have what is needed yet.", 'm-red'); return; }
     // Counter steps are proved by a running total the sim keeps (fires lit, rats
     // killed) rather than by something held, so they cannot be faked by the client
     // either — it never touches these.

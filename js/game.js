@@ -2283,7 +2283,7 @@ const Game = {
   // quest whose steps live in QUEST_STEPS and are therefore re-checked by the sim.
   // Everything else still says so, because its dialogue mutates player state
   // directly and the authority would never see it.
-  NET_TALK: ['guide', 'artisan', 'cook', 'doric', 'shopkeeper', 'banker', 'instructor', 'townsman', 'townswoman', 'villager', 'bartender', 'innkeeper', 'farmer', 'farmhand', 'marshal'],
+  NET_TALK: ['guide', 'artisan', 'cook', 'doric', 'shopkeeper', 'priest', 'wenna', 'banker', 'instructor', 'townsman', 'townswoman', 'villager', 'bartender', 'innkeeper', 'farmer', 'farmhand', 'marshal'],
   netTalkTo(n) {
     const d = NPC_DEFS[n.type];
     if (!this.NET_TALK.includes(n.type)) return this.netTodo();
@@ -3017,11 +3017,11 @@ const Game = {
       ]);
     }
     if (q.souls === 1) {
-      if (!this.hasItem('ancient_relic')) return this.dialogue([
+      if (!this.questReady('souls')) return this.dialogue([
         ['Sister Wenna', 'You came without it. I cannot read a relic you left in a drawer.'],
         ['Sister Wenna', 'Fetch the Ancient Relic from Father Aereck and bring it here.']
       ]);
-      q.souls = 2; UI.renderQuests();
+      this.questAdvance('souls');
       return this.dialogue([
         ['Sister Wenna', 'Ah. Give it here. Mind your fingers — it is colder than it has any business being.'],
         ['', 'She turns it under the lamp for a long time without speaking.'],
@@ -3494,6 +3494,7 @@ const Game = {
     const step = questStepFor(questId, stage);
     if (!step) return false;
     for (const [id, q] of Object.entries(step.needs || {})) if (this.countItem(id) < q) return false;
+    for (const [id, q] of Object.entries(step.hold || {})) if (this.countItem(id) < q) return false;
     for (const [key, n] of Object.entries(step.counter || {})) if ((this.player[key] | 0) < n) return false;
     for (const [id, q] of Object.entries(step.needs || {})) this.removeItem(id, q);
     for (const [id, q] of Object.entries(step.give || {})) this.addItem(id, q);
@@ -3507,6 +3508,7 @@ const Game = {
     const step = questStepFor(questId, this.player.quests[questId] | 0);
     if (!step) return false;
     return Object.entries(step.needs || {}).every(([id, q]) => this.countItem(id) >= q)
+        && Object.entries(step.hold || {}).every(([id, q]) => this.countItem(id) >= q)
         && Object.entries(step.counter || {}).every(([key, n]) => (this.player[key] | 0) >= n);
   },
 
@@ -3601,21 +3603,16 @@ const Game = {
         ['Father Aereck', 'Recover it and the gods will reward you. Take food, and beware.'],
         ['', 'You have started the quest: The Restless Dead']
       ]);
-      q.relic = 1;
-      UI.renderQuests();
+      this.questAdvance('relic');
     } else if (q.relic === 1) {
-      if (this.hasItem('ancient_relic')) {
-        this.removeItem('ancient_relic', 1);
-        this.addItem('coins', 200);
-        this.addXp('prayer', 300);
+      if (this.questReady('relic')) {
+        this.questAdvance('relic');
         this.dialogue([
           ['You', 'I found your relic, Father.'],
           ['Father Aereck', 'The gods smile upon you! Accept this blessing and these coins.'],
           ['', 'You have completed the quest: The Restless Dead!']
         ]);
         Sound.play('levelup');
-        q.relic = 2;
-        UI.renderQuests();
       } else {
         this.dialogue([['Father Aereck', 'The relic lies deep in the dungeon below the old ruin. Climb down the ladder north-west of town.']]);
       }
@@ -3627,8 +3624,7 @@ const Game = {
         ['Father Aereck', 'And the graves behind the church have begun to... settle. Wrongly. Upward.'],
         { who: 'Father Aereck', text: 'I am a priest, not a scholar. Will you take it to someone who can read it?', choices: [
           { label: 'Who should I take it to?', cb: () => {
-            q.souls = 1; UI.renderQuests();
-            if (!this.hasItem('ancient_relic')) this.addItem('ancient_relic', 1);
+            this.questAdvance('souls');
             this.dialogue([
               ['Father Aereck', 'Sister Wenna, at the cathedral in Southmarch. She reads dead scripts for the pleasure of it.'],
               ['Father Aereck', 'Take the relic. Take it out of my church, if I am honest with you.'],
